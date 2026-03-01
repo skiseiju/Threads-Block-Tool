@@ -151,11 +151,6 @@ export const UI = {
                     <span class="status" id="hege-failed-count">0</span>
                 </div>
                 
-                <!-- Use isMobile from Utils -->
-                <div class="hege-menu-item" id="hege-mode-toggle-item" style="border-top:1px solid #333; display: ${isMobile ? 'none' : 'flex'};">
-                    <span>模式: <span id="hege-mode-text">自動</span></span>
-                    <span class="status" id="hege-mode-desc"></span>
-                </div>
 
                 <div class="hege-menu-item danger" id="hege-clear-db-item">
                     <span>清除所有歷史</span>
@@ -193,7 +188,7 @@ export const UI = {
         bindClick('hege-export-item', callbacks.onExport);
         bindClick('hege-retry-failed-item', callbacks.onRetryFailed);
         bindClick('hege-stop-btn-item', callbacks.onStop);
-        bindClick('hege-mode-toggle-item', callbacks.onModeToggle);
+
 
         // Header click toggles too
         document.getElementById('hege-header').onclick = (e) => {

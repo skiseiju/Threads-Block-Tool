@@ -16,15 +16,13 @@ Utils.isMobile() → false: Desktop (Mac/Windows/Linux)
 
 ---
 
-## 三種封鎖路徑總覽
+## 兩種封鎖路徑總覽
 
 ```mermaid
 graph TD
     A[使用者按下「開始封鎖」] --> B{Utils.isMobile?}
     B -->|Mobile| C[Core.runSameTabWorker]
-    B -->|Desktop| D{MAC_MODE?}
-    D -->|foreground| E[Core.runForegroundBlock]
-    D -->|background| F[window.open → Worker]
+    B -->|Desktop| F[window.open → Worker]
 
     C --> G[history.replaceState + reload]
     G --> H[Worker.init → runStep 循環]
@@ -32,8 +30,8 @@ graph TD
     I --> J[Worker.autoBlock 執行封鎖]
     J --> K[完成 → navigateBack 返回原頁]
 
-    E --> L[在當前頁面模擬點擊 ... 按鈕]
     F --> M[新分頁中執行 Worker]
+    M --> H
 ```
 
 ---
@@ -51,7 +49,7 @@ graph TD
 3. **`history.replaceState`** 修改 URL 為 `/?hege_bg=true`
 4. **`location.reload()`** 重新載入頁面
 5. 頁面載入後，`main.js` 偵測 `hege_bg=true` → 呼叫 `Worker.init()`
-6. Worker 顯示全螢幕進度 UI
+6. Worker 顯示全螢幕進度 UI（進度條、ETA、統計、停止按鈕）
 7. `Worker.runStep()` 逐一處理佇列：
    - 以 **`history.replaceState`** + `reload` 跳轉到 `/@username?hege_bg=true`
    - 執行 `Worker.autoBlock()` 自動化封鎖流程
@@ -80,42 +78,21 @@ location.reload();
 ## 路徑 2：Desktop 背景分頁 Worker (`window.open`)
 
 **檔案**：`main.js` → `worker.js`
-**適用**：Desktop（`MAC_MODE === 'background'`，預設值）
+**適用**：Desktop（Mac / Windows / Linux）
 
 ### 流程
 
 1. 將 `pendingUsers` 合併至 `BG_QUEUE`
 2. `window.open('https://www.threads.net/?hege_bg=true', ...)` 開啟新分頁
 3. 新分頁載入 → `Worker.init()` → `Worker.runStep()` 循環
-4. Worker 以 `window.location.href` 逐一跳轉（Desktop 不受 Universal Links 影響）
-5. 完成後 `window.close()` 關閉分頁
+4. Worker 顯示進度 UI（與 Mobile 相同的進度條、ETA、統計、停止按鈕）
+5. Worker 以 `window.location.href` 逐一跳轉（Desktop 不受 Universal Links 影響）
+6. 完成後 `window.close()` 關閉分頁
 
 ### 跨分頁通訊
 
 - Worker 透過 `localStorage` (BG_STATUS, BG_QUEUE) 與主分頁同步狀態
 - 主分頁透過 `window.addEventListener('storage', ...)` + `setInterval` 輪詢更新 UI
-
----
-
-## 路徑 3：Desktop 前景模擬 (`runForegroundBlock`)
-
-**檔案**：`core.js`
-**適用**：Desktop（`MAC_MODE === 'foreground'`）
-
-### 流程
-
-1. 遍歷 `Core.blockQueue`（畫面上已勾選的 `...` 按鈕 DOM 元素）
-2. 對每個按鈕：
-   - `scrollIntoView` → `simClick` 點擊 `...` 按鈕
-   - 等待選單出現 → 點擊「封鎖」
-   - 等待確認對話框 → 點擊確認
-3. 記錄至 DB，隱藏已封鎖的貼文
-
-### ⚠️ 限制
-
-- **只能處理畫面上有 `...` 按鈕的使用者**（`Core.blockQueue` 內的 DOM 元素）
-- 無法處理「同列全封」或「匯入清單」的使用者（這些只有 username 字串，沒有 DOM 按鈕）
-- 因此 **Mobile 不使用此路徑**
 
 ---
 

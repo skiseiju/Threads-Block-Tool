@@ -1,5 +1,5 @@
 export const CONFIG = {
-    VERSION: '2.0.7', // Fix Worker internal nav Universal Links
+    VERSION: '2.1.0', // Official Release: Worker UI 2.0 & Cooldown Protection
     DEBUG_MODE: true,
     DB_KEY: 'hege_block_db_v1',
     KEYS: {
@@ -14,7 +14,9 @@ export const CONFIG = {
         POS: 'hege_panel_pos',
         STATE: 'hege_panel_state',
         DISCLAIMER_AGREED: 'hege_disclaimer_agreed_v2_1',
-        FAILED_QUEUE: 'hege_failed_queue'
+        FAILED_QUEUE: 'hege_failed_queue',
+        COOLDOWN_QUEUE: 'hege_cooldown_queue',
+        DB_TIMESTAMPS: 'hege_block_timestamps'
     },
     SELECTORS: {
         MORE_SVG: 'svg[aria-label="更多"], svg[aria-label="More"]',

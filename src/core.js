@@ -281,12 +281,14 @@ export const Core = {
             if (username) {
                 btn.dataset.username = username;
                 container.dataset.username = username;
-            }
 
-            if (username) {
+                const db = new Set(Storage.getJSON(CONFIG.KEYS.DB_KEY));
+                const cdq = new Set(Storage.getJSON(CONFIG.KEYS.COOLDOWN_QUEUE, []));
+                const bgq = new Set(Storage.getJSON(CONFIG.KEYS.BG_QUEUE, []));
+
                 if (db.has(username)) {
                     container.classList.add('finished');
-                } else if (Core.pendingUsers.has(username)) {
+                } else if (Core.pendingUsers.has(username) || cdq.has(username) || bgq.has(username)) {
                     container.classList.add('checked');
                     Core.blockQueue.add(btn);
                 }
@@ -399,7 +401,13 @@ export const Core = {
                 Array.from(Core.blockQueue).forEach(b => {
                     if (b.dataset && b.dataset.username === u) Core.blockQueue.delete(b);
                 });
-                if (u) Core.pendingUsers.delete(u);
+                if (u) {
+                    Core.pendingUsers.delete(u);
+                    let bg = Storage.getJSON(CONFIG.KEYS.BG_QUEUE, []);
+                    if (bg.includes(u)) Storage.setJSON(CONFIG.KEYS.BG_QUEUE, bg.filter(x => x !== u));
+                    let cdq = Storage.getJSON(CONFIG.KEYS.COOLDOWN_QUEUE, []);
+                    if (cdq.includes(u)) Storage.setJSON(CONFIG.KEYS.COOLDOWN_QUEUE, cdq.filter(x => x !== u));
+                }
             } else if (targetAction === 'check' && !box.classList.contains('checked') && !box.classList.contains('finished')) {
                 box.classList.add('checked');
                 if (btnElement) btnElement.dataset.username = u;
@@ -445,11 +453,13 @@ export const Core = {
         Core._uiUpdatePending = null;
 
         const db = new Set(Storage.getJSON(CONFIG.KEYS.DB_KEY));
+        const cdq = new Set(Storage.getJSON(CONFIG.KEYS.COOLDOWN_QUEUE, []));
+        const bgq = new Set(Storage.getJSON(CONFIG.KEYS.BG_QUEUE, []));
 
         // Global cleanup
         let pendingChanged = false;
         for (const u of Core.pendingUsers) {
-            if (db.has(u)) {
+            if (db.has(u) || cdq.has(u) || bgq.has(u)) {
                 Core.pendingUsers.delete(u);
                 pendingChanged = true;
             }
@@ -459,13 +469,23 @@ export const Core = {
         // Only update visible elements or those that need state change
         document.querySelectorAll('.hege-checkbox-container').forEach(el => {
             const u = el.dataset.username;
-            if (u && db.has(u)) {
+            if (!u) return;
+
+            if (db.has(u)) {
                 if (!el.classList.contains('finished')) {
                     el.classList.add('finished');
                     el.classList.remove('checked');
                 }
-            } else if (u && !db.has(u) && el.classList.contains('finished')) {
+            } else if (Core.pendingUsers.has(u) || cdq.has(u) || bgq.has(u)) {
+                if (!el.classList.contains('checked') && !el.classList.contains('finished')) {
+                    el.classList.add('checked');
+                } else if (el.classList.contains('finished')) {
+                    el.classList.remove('finished');
+                    el.classList.add('checked');
+                }
+            } else {
                 el.classList.remove('finished');
+                el.classList.remove('checked');
             }
         });
 
@@ -493,12 +513,21 @@ export const Core = {
         let mainText = '開始封鎖';
         let headerColor = 'transparent'; // Use transparent or theme color
 
-        const bgStatus = Storage.getJSON(CONFIG.KEYS.BG_STATUS, {});
-        if (bgStatus.state === 'running' && (Date.now() - (bgStatus.lastUpdate || 0) < 10000)) {
-            shouldShowStop = true;
-            mainText = `背景執行中 剩餘 ${bgStatus.total}`;
-            headerColor = '#4cd964';
-            badgeText = `(${bgStatus.total}剩餘)`; // Show progress in header badge explicitly
+        const cooldownUntil = parseInt(Storage.get(CONFIG.KEYS.COOLDOWN) || '0');
+        if (cooldownUntil > Date.now()) {
+            const remainHrs = Math.ceil((cooldownUntil - Date.now()) / (1000 * 60 * 60));
+            const cdQueueSize = Storage.getJSON(CONFIG.KEYS.COOLDOWN_QUEUE, []).length;
+            mainText = `⛔ 限制保護中 (${remainHrs}小時候恢復)`;
+            headerColor = '#ff453a';
+            badgeText = `(${cdQueueSize}冷卻中)`;
+        } else {
+            const bgStatus = Storage.getJSON(CONFIG.KEYS.BG_STATUS, {});
+            if (bgStatus.state === 'running' && (Date.now() - (bgStatus.lastUpdate || 0) < 10000)) {
+                shouldShowStop = true;
+                mainText = `背景執行中 剩餘 ${bgStatus.total}`;
+                headerColor = '#4cd964';
+                badgeText = `(${bgStatus.total}剩餘)`; // Show progress in header badge explicitly
+            }
         }
 
         const badge = document.getElementById('hege-queue-badge');
@@ -523,6 +552,7 @@ export const Core = {
 
         Storage.setJSON(CONFIG.KEYS.BG_QUEUE, newQ);
         Storage.remove(CONFIG.KEYS.BG_CMD);
+        Storage.remove('hege_worker_stats'); // Fresh stats for new session
 
         if (toAdd.length > 0) {
             Core.pendingUsers.clear();
@@ -544,185 +574,7 @@ export const Core = {
         location.reload();
     },
 
-    runForegroundBlock: async () => {
-        if (Core.isRunning) return;
-        Core.isRunning = true;
-        document.body.classList.add('hege-ghost-mode');
 
-        const targets = Array.from(Core.blockQueue);
-        const total = targets.length;
-        let successCount = 0;
-        let failCount = 0;
-
-        UI.showToast(`iOS模式啟動：處理 ${total} 筆`);
-        Utils.log(`Starting iOS Block: ${total} users`);
-
-        for (let i = 0; i < total; i++) {
-            const btn = targets[i];
-            const count = i;
-
-            // Update Status in UI if possible
-            const mainItem = document.getElementById('hege-main-btn-item');
-            if (mainItem) mainItem.querySelector('span').textContent = `處理中 ${count + 1}/${total}`;
-
-            try {
-                // Ensure element is in view/interactable
-                btn.scrollIntoView({ block: "center", inline: "center" });
-                await Utils.sleep(500);
-
-                btn.style.transform = 'none';
-                Utils.log(`[DEBUG] Click More Button #${count + 1}`);
-                Utils.simClick(btn);
-                await Utils.sleep(800);
-
-                // 1. Click Menu Item "Block"
-                let menuClicked = false;
-                let alreadyBlocked = false;
-                // Select all menu items (including divs that act as buttons)
-                const menuItems = document.querySelectorAll('div[role="menuitem"], div[role="button"]');
-
-                for (let j = menuItems.length - 1; j >= 0; j--) {
-                    const text = menuItems[j].innerText.trim();
-
-                    // "Already Blocked" Detection
-                    if (text.includes('解除封鎖') || text.includes('Unblock')) {
-                        Utils.log(`[DEBUG] Found 'Unblock' -> Already Blocked. Marking success.`);
-                        alreadyBlocked = true;
-                        document.body.click(); // Close menu
-                        break;
-                    }
-
-                    if (text.includes('封鎖') || text.includes('Block')) {
-                        Utils.log(`[DEBUG] Click Block Item: ${text}`);
-                        Utils.simClick(menuItems[j]);
-                        // Some menus have nested span, click that too just in case
-                        if (menuItems[j].querySelector('span')) Utils.simClick(menuItems[j].querySelector('span'));
-                        menuClicked = true;
-                        break;
-                    }
-                }
-
-                if (alreadyBlocked) {
-                    if (btn.dataset.username) {
-                        const u = btn.dataset.username;
-                        Core.saveToDB(u);
-                        if (Core.pendingUsers.has(u)) {
-                            Core.pendingUsers.delete(u);
-                            Storage.setSessionJSON(CONFIG.KEYS.PENDING, [...Core.pendingUsers]);
-                        }
-                    }
-                    successCount++;
-                    Core.blockQueue.delete(btn);
-                    Utils.log(`Blocked #${count + 1} Success (Already Blocked)`);
-
-                    // Hide Parent Post
-                    let c = btn.parentElement;
-                    for (let k = 0; k < 6; k++) { if (c?.parentElement) c = c.parentElement; }
-                    if (c) c.style.display = 'none';
-
-                    Core.updateControllerUI();
-                    await Utils.sleep(500);
-                    continue;
-                }
-
-                if (!menuClicked) {
-                    Utils.log(`Err: Menu 'Block' not found for #${count + 1}`);
-                    document.body.click(); // Close menu
-                    failCount++;
-                    continue;
-                }
-
-                await Utils.sleep(1000);
-
-                // 2. Confirm Block (Dialog)
-                let confirmClicked = false;
-                const allButtons = document.querySelectorAll('div[role="button"]');
-                for (let j = allButtons.length - 1; j >= 0; j--) {
-                    const b = allButtons[j];
-                    const text = b.innerText.trim();
-                    const style = window.getComputedStyle(b);
-                    // Look for Red buttons or "Block" text in dialog
-                    if ((text.includes('封鎖') || text.includes('Block') || style.color === 'rgb(255, 59, 48)') && b.offsetParent !== null) {
-                        Utils.simClick(b);
-                        confirmClicked = true;
-                        break;
-                    }
-                }
-
-                if (!confirmClicked) {
-                    // Fallback: Try last button in dialog
-                    const dialog = document.querySelector('div[role="dialog"]');
-                    if (dialog) {
-                        const dialogBtns = dialog.querySelectorAll('div[role="button"]');
-                        if (dialogBtns.length > 0) {
-                            Utils.simClick(dialogBtns[dialogBtns.length - 1]);
-                            confirmClicked = true;
-                        }
-                    }
-                }
-
-                if (confirmClicked) {
-                    await Utils.sleep(2000);
-
-                    // Stuck Dialog Check
-                    if (document.querySelector('div[role="dialog"]')) {
-                        Utils.log('Dialog stuck, trying close...');
-                        document.body.click(); // Try close
-                        await Utils.sleep(500);
-                        if (document.querySelector('div[role="dialog"]')) {
-                            Utils.log(`Err: Stuck dialog #${count + 1}`);
-                            failCount++;
-                            continue;
-                        }
-                    }
-
-                    if (btn.dataset.username) {
-                        const u = btn.dataset.username;
-                        Core.saveToDB(u);
-                        if (Core.pendingUsers.has(u)) {
-                            Core.pendingUsers.delete(u);
-                            Storage.setSessionJSON(CONFIG.KEYS.PENDING, [...Core.pendingUsers]);
-                        }
-                    }
-                    successCount++;
-                    Core.blockQueue.delete(btn);
-                    Utils.log(`Blocked #${count + 1} Success`);
-
-                    // Hide Parent Post
-                    let c = btn.parentElement; for (let k = 0; k < 6; k++) { if (c?.parentElement) c = c.parentElement; }
-                    if (c) c.style.display = 'none';
-
-                    Core.updateControllerUI();
-                } else {
-                    Utils.log(`Err: Confirm btn not found #${count + 1}`);
-                    document.body.click();
-                    failCount++;
-                }
-
-            } catch (e) {
-                Utils.log(`Err Exception: ${e.message}`);
-                console.error(e);
-                failCount++;
-            }
-            await Utils.sleep(500);
-        }
-
-        UI.showToast(`執行完成。成功: ${successCount}, 失敗: ${failCount}`);
-        Utils.log(`Done. Success: ${successCount}, Fail: ${failCount}`);
-
-        Core.isRunning = false;
-        document.body.classList.remove('hege-ghost-mode');
-
-        const mainItem = document.getElementById('hege-main-btn-item');
-        if (mainItem) {
-            mainItem.style.pointerEvents = 'auto';
-            mainItem.style.opacity = '1';
-            mainItem.querySelector('span').textContent = '開始封鎖';
-        }
-        Core.updateControllerUI();
-
-        if (failCount > 0) alert(`完成。\n成功: ${successCount}\n失效: ${failCount}`);
-    },
 
     exportHistory: () => {
         const db = Storage.getJSON(CONFIG.KEYS.DB_KEY, []);

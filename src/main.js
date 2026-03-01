@@ -19,8 +19,30 @@ import { Worker } from './worker.js';
         Storage.setJSON(CONFIG.KEYS.FAILED_QUEUE, []);
         Storage.setJSON(CONFIG.KEYS.BG_STATUS, {});
 
+        // Beta 10/16 Cleanup: Remove all potententially stale verification or cooldown data
+        // Explicitly use localStorage.removeItem to ensure iOS UIWebViews don't ignore it
+        localStorage.removeItem('hege_cooldown_queue');
+        localStorage.removeItem('hege_rate_limit_until');
+        localStorage.removeItem('hege_block_timestamps');
+        localStorage.removeItem('hege_worker_stats');
+
+        Storage.remove(CONFIG.KEYS.COOLDOWN_QUEUE);
+        Storage.remove(CONFIG.KEYS.COOLDOWN);
+        Storage.remove('hege_worker_stats');
+        Storage.setJSON(CONFIG.KEYS.DB_TIMESTAMPS, {});
+
         Storage.set(CONFIG.KEYS.VERSION_CHECK, CONFIG.VERSION);
         console.log(`[留友封] Updated to v${CONFIG.VERSION}. Cleared all temporary queues.`);
+    }
+
+    // Unconditional safety clear: if the user manually fired an event but they are stuck, force them away
+    const forceClear = new URLSearchParams(window.location.search).get('hege_clear');
+    if (forceClear === 'true') {
+        localStorage.removeItem('hege_cooldown_queue');
+        localStorage.removeItem('hege_rate_limit_until');
+        localStorage.removeItem('hege_block_timestamps');
+        localStorage.removeItem('hege_worker_stats');
+        alert('緊急清除完成，請重新整理頁面。');
     }
 
     const isBgPage = new URLSearchParams(window.location.search).get('hege_bg') === 'true';
@@ -37,6 +59,13 @@ import { Worker } from './worker.js';
 
             const handleMainButton = () => {
                 const pending = Core.pendingUsers;
+                const cooldownUntil = parseInt(Storage.get(CONFIG.KEYS.COOLDOWN) || '0');
+                if (cooldownUntil > Date.now()) {
+                    const remainHrs = Math.ceil((cooldownUntil - Date.now()) / (1000 * 60 * 60));
+                    UI.showToast(`⛔ 系統限制保護中，約 ${remainHrs} 小時後才可再次執行`);
+                    return;
+                }
+
                 if (pending.size === 0) { UI.showToast('請先勾選用戶！'); return; }
 
                 const isMobile = Utils.isMobile();
@@ -118,7 +147,7 @@ import { Worker } from './worker.js';
 
             // Sync Logic (Restored from beta46)
             window.addEventListener('storage', (e) => {
-                if (e.key === CONFIG.KEYS.BG_STATUS || e.key === CONFIG.KEYS.DB_KEY || e.key === CONFIG.KEYS.BG_QUEUE) {
+                if (e.key === CONFIG.KEYS.BG_STATUS || e.key === CONFIG.KEYS.DB_KEY || e.key === CONFIG.KEYS.BG_QUEUE || e.key === CONFIG.KEYS.COOLDOWN || e.key === CONFIG.KEYS.COOLDOWN_QUEUE) {
                     Storage.invalidate(e.key); // Force cache clear so getJSON fetches fresh data
                     Core.updateControllerUI();
                 }
@@ -127,6 +156,8 @@ import { Worker } from './worker.js';
                 Storage.invalidate(CONFIG.KEYS.DB_KEY);
                 Storage.invalidate(CONFIG.KEYS.BG_STATUS);
                 Storage.invalidate(CONFIG.KEYS.BG_QUEUE);
+                Storage.invalidate(CONFIG.KEYS.COOLDOWN);
+                Storage.invalidate(CONFIG.KEYS.COOLDOWN_QUEUE);
                 Core.updateControllerUI();
             }, 2000); // Polling backup
 

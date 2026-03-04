@@ -215,23 +215,23 @@ svg[aria-label="更多"] viewBox="0 0 24 24"
 **檔案**：`worker.js`
 
 ```
-1. 等待頁面載入 (2.5s)
-2. Polling 尋找 Profile「更多」SVG 按鈕 (最多 12s)
+1. 跳轉至 /@user/replies (若進階封鎖啟用) 或 /@user
+2. 等待頁面載入 (2.5s)
+3. Polling 尋找 Profile「更多」SVG 按鈕 (最多 12s)
    └─ 檢查 SVG 結構：circle + path ≥ 3
-3. simClick 點擊「更多」按鈕
-4. Polling 等待選單出現 (最多 8s，3s 後自動重試 click)
+4. 若找到 Profile 按鈕，simClick 點擊
+5. Polling 等待選單出現 (最多 8s，3s 後若無選單則自動重試 click)
    ├─ 偵測到「解除封鎖」→ return 'already_blocked'
    └─ 偵測到「封鎖」→ 點擊
-4b. [Post Fallback] Profile 選單沒有封鎖按鈕時（開關啟用時）：
-   ├─ 按 Escape 關閉選單
+6. [Post Fallback] 若 Profile 選單無效 (找不到按鈕 或 點不開 或 無封鎖選項) 且在 /replies 頁：
    ├─ 找 a[href*="/@user/post/"] 貼文連結
    ├─ 從連結往上爬 DOM → 找到貼文的 svg「更多」
    ├─ 點擊 → 等選單 → 找「封鎖」
    └─ 全失敗 → return 'rate_limited'
-5. Polling 等待確認對話框 (最多 5s)
+7. Polling 等待確認對話框 (最多 5s)
    ├─ 偵測到限制訊息 → return 'cooldown'
    └─ 點擊紅色確認按鈕
-6. 等待對話框關閉 (最多 8s)
+8. 等待對話框關閉 (最多 8s)
    └─ return 'success' 或 'failed'
 ```
 
@@ -246,7 +246,7 @@ svg[aria-label="更多"] viewBox="0 0 24 24"
 
 ---
 
-## 🛡防護機制：自適應驗證 (Adaptive Verification)
+## 🛡防護機制：雙重自適應驗證 (Dual-Fallback Adaptive Verification)
 
 **目的**：對抗 Threads 伺服器的「假性成功」（UI 顯示已封鎖但實際未生效）。
 
@@ -262,7 +262,10 @@ svg[aria-label="更多"] viewBox="0 0 24 24"
    - 在 fresh DOM 上重啟該用戶的「更多」選單
    - 若出現「解除封鎖 (Unblock)」代表真成功；若仍是「封鎖 (Block)」代表靜默失敗
    - **為何需要 reload**：封鎖後同頁面的 React Virtual DOM 可能尚未同步伺服器狀態，直接檢查會產生大量誤判。Reload 強制 React 重新渲染，確保驗證結果準確。
-3. 若 Level 2 連續 5 次驗證失敗，將視為遭到嚴格限制，強制進入**冷卻模式**。
+3. **貼文備案驗證 (Post Fallback Verification)**：
+   - 如果 Profile 「更多」按鈕無法點擊或選單無法顯示，且當前為 `/replies` 頁面，系統會往下尋找貼文的「更多」按鈕作為備用入口來確認封鎖狀態。
+4. **嚴格失敗判定**：如果驗證過程發生任何異常（選單打不開、判定不出狀態），統一回傳 `false` (失敗)。
+5. 若 Level 2 **連續 5 次驗證失敗**，將視為遭到嚴格限制，強制進入**冷卻模式**。
 
 ---
 

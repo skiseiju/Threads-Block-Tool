@@ -146,6 +146,11 @@ export const UI = {
                     <span>匯出紀錄</span>
                 </div>
                 
+                <div class="hege-menu-item" id="hege-post-fallback-item">
+                    <span>貼文備案封鎖</span>
+                    <span class="status" id="hege-post-fallback-status">開</span>
+                </div>
+                
                 <div class="hege-menu-item danger" id="hege-retry-failed-item" style="display:none;">
                     <span>重試失敗清單</span>
                     <span class="status" id="hege-failed-count">0</span>
@@ -192,6 +197,16 @@ export const UI = {
         bindClick('hege-retry-failed-item', callbacks.onRetryFailed);
         bindClick('hege-report-item', callbacks.onReport);
         bindClick('hege-stop-btn-item', callbacks.onStop);
+
+        // Post Fallback toggle
+        const pfStatus = document.getElementById('hege-post-fallback-status');
+        if (pfStatus) pfStatus.textContent = Storage.get(CONFIG.KEYS.POST_FALLBACK) === 'false' ? '關' : '開';
+        bindClick('hege-post-fallback-item', () => {
+            const current = Storage.get(CONFIG.KEYS.POST_FALLBACK) !== 'false';
+            Storage.set(CONFIG.KEYS.POST_FALLBACK, (!current).toString());
+            const el = document.getElementById('hege-post-fallback-status');
+            if (el) el.textContent = !current ? '開' : '關';
+        });
 
 
         // Header click toggles too

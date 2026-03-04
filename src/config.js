@@ -1,5 +1,5 @@
 export const CONFIG = {
-    VERSION: '2.2.0', // Official Release: Worker UI 2.0 & Cooldown Protection
+    VERSION: '2.2.1-beta1', // Official Release: Worker UI 2.0 & Cooldown Protection
     DEBUG_MODE: true,
     DB_KEY: 'hege_block_db_v1',
     KEYS: {
@@ -18,7 +18,8 @@ export const CONFIG = {
         COOLDOWN_QUEUE: 'hege_cooldown_queue',
         DB_TIMESTAMPS: 'hege_block_timestamps',
         VERIFY_PENDING: 'hege_verify_pending',
-        DEBUG_LOG: 'hege_debug_log'
+        DEBUG_LOG: 'hege_debug_log',
+        POST_FALLBACK: 'hege_post_fallback'
     },
     LIMITS: {
         OVERLAY_ZINDEX: 999999,

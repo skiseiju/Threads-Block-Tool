@@ -752,20 +752,92 @@ export const Worker = {
                         return 'already_blocked';
                     }
                 }
-                // Diagnostic dump: collect all menu item text
-                const allMenuItems = document.querySelectorAll('div[role="menuitem"]');
-                const menuTexts = Array.from(allMenuItems).map(el => (el.innerText || el.textContent || '').trim().substring(0, 30));
-                const allBtns = document.querySelectorAll('div[role="button"]');
-                const btnTexts = Array.from(allBtns).map(el => (el.innerText || el.textContent || '').trim().substring(0, 30)).filter(t => t.length > 0);
-                const dialogCount = document.querySelectorAll('div[role="dialog"]').length;
-                if (window.hegeLog) {
-                    window.hegeLog(`[DIAG] @${user} 找不到封鎖鈕`);
-                    window.hegeLog(`[DIAG] menuitem(${menuTexts.length}): ${JSON.stringify(menuTexts)}`);
-                    window.hegeLog(`[DIAG] buttons(${btnTexts.length}): ${JSON.stringify(btnTexts.slice(0, 15))}`);
-                    window.hegeLog(`[DIAG] Dialogs: ${dialogCount}`);
+
+                // === Post-Level Fallback (開關控制) ===
+                const postFallbackEnabled = Storage.get(CONFIG.KEYS.POST_FALLBACK) !== 'false';
+                if (postFallbackEnabled) {
+                    setStep('Profile 選單無效，嘗試貼文備案...');
+                    if (window.hegeLog) window.hegeLog(`[DIAG] Profile 選單無封鎖鈕，啟動貼文備案`);
+
+                    // 關閉 Profile 選單
+                    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+                    await Utils.sleep(800);
+
+                    // 找該使用者的貼文連結
+                    const postLinks = document.querySelectorAll(`a[href*="/@${user}/post/"]`);
+                    if (window.hegeLog) window.hegeLog(`[DIAG] 找到 ${postLinks.length} 篇貼文連結`);
+
+                    for (const link of postLinks) {
+                        // 從貼文連結往上爬 DOM，尋找包含「更多」SVG 的共同容器
+                        let container = link;
+                        let postMoreBtn = null;
+                        for (let lvl = 0; lvl < 8; lvl++) {
+                            container = container.parentElement;
+                            if (!container) break;
+                            const svg = container.querySelector('svg[aria-label="更多"], svg[aria-label="More"]');
+                            if (!svg) continue;
+                            const btn = svg.closest('div[role="button"]');
+                            if (!btn) continue;
+                            postMoreBtn = btn;
+                            break;
+                        }
+
+                        if (!postMoreBtn) continue;
+
+                        if (window.hegeLog) window.hegeLog(`[DIAG] 嘗試貼文「更多」按鈕: ${link.getAttribute('href')}`);
+
+                        // 點擊 Post 層的三個點
+                        postMoreBtn.scrollIntoView({ block: 'center' });
+                        await Utils.sleep(500);
+                        Utils.simClick(postMoreBtn);
+
+                        // 等選單 + 尋找封鎖按鈕 (polling up to 6s)
+                        for (let pi = 0; pi < 12; pi++) {
+                            await Utils.sleep(500);
+                            const pMenuItems = document.querySelectorAll('div[role="menuitem"], div[role="button"]');
+                            for (let item of pMenuItems) {
+                                const t = item.innerText || item.textContent;
+                                if (!t) continue;
+                                if (t.includes('解除封鎖') || t.includes('Unblock')) {
+                                    setStep('已封鎖 (略過)');
+                                    return 'already_blocked';
+                                }
+                                if ((t.includes('封鎖') && !t.includes('解除')) || (t.includes('Block') && !t.includes('Un'))) {
+                                    blockBtn = item;
+                                    break;
+                                }
+                            }
+                            if (blockBtn) break;
+                        }
+
+                        if (blockBtn) {
+                            if (window.hegeLog) window.hegeLog(`[DIAG] ✅ 貼文備案成功找到封鎖鈕！`);
+                            break;
+                        }
+
+                        // 這篇失敗，關閉選單繼續下一篇
+                        if (window.hegeLog) window.hegeLog(`[DIAG] 貼文備案此篇無效，嘗試下一篇...`);
+                        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+                        await Utils.sleep(500);
+                    }
                 }
-                setStep('錯誤: 找不到封鎖鈕 (可能遭限制)');
-                return 'rate_limited';
+
+                if (!blockBtn) {
+                    // 全部失敗 — 診斷 dump + rate_limited
+                    const allMenuItems = document.querySelectorAll('div[role="menuitem"]');
+                    const menuTexts = Array.from(allMenuItems).map(el => (el.innerText || el.textContent || '').trim().substring(0, 30));
+                    const allBtns = document.querySelectorAll('div[role="button"]');
+                    const btnTexts = Array.from(allBtns).map(el => (el.innerText || el.textContent || '').trim().substring(0, 30)).filter(t => t.length > 0);
+                    const dialogCount = document.querySelectorAll('div[role="dialog"]').length;
+                    if (window.hegeLog) {
+                        window.hegeLog(`[DIAG] @${user} 找不到封鎖鈕 (含貼文備案)`);
+                        window.hegeLog(`[DIAG] menuitem(${menuTexts.length}): ${JSON.stringify(menuTexts)}`);
+                        window.hegeLog(`[DIAG] buttons(${btnTexts.length}): ${JSON.stringify(btnTexts.slice(0, 15))}`);
+                        window.hegeLog(`[DIAG] Dialogs: ${dialogCount}`);
+                    }
+                    setStep('錯誤: 找不到封鎖鈕 (可能遭限制)');
+                    return 'rate_limited';
+                }
             }
 
             setStep('點擊封鎖...');

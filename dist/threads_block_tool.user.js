@@ -1405,7 +1405,7 @@ const Worker = {
     sessionQueue: [],          // 本次 session 完整名單快照
     verifyLevel: 0,            // 0=每5次, 1=每3次, 2=每次
     verifyCount: 0,            // 自上次驗證以來的計數
-    consecutiveRateLimits: Worker.stats.consecutiveRateLimits || 0,
+    consecutiveRateLimits: 0,
     consecutiveFails: 0,       // Level 2 連續失敗計數
 
     saveStats: () => {

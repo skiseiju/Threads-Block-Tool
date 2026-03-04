@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         留友封 (Threads 封鎖工具)
 // @namespace    http://tampermonkey.net/
-// @version      2.2.1
+// @version      2.2.0
 // @description  Modular Refactor Build
 // @author       海哥
 // @match        https://www.threads.net/*
@@ -14,10 +14,10 @@
 
 (function() {
     'use strict';
-    console.log('[HegeBlock] Content Script Injected, Version: 2.2.1');
+    console.log('[HegeBlock] Content Script Injected, Version: 2.2.0');
 // --- config.js ---
 const CONFIG = {
-    VERSION: '2.2.1', // Bug Report System & Stability
+    VERSION: '2.2.0', // Bug Report System & Stability
     DEBUG_MODE: true,
     DB_KEY: 'hege_block_db_v1',
     KEYS: {

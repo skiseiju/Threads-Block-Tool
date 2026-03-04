@@ -19,8 +19,8 @@ if [[ "$1" == "--release" ]]; then
     if [[ "$OLD_VERSION" == *"-beta"* ]]; then
         APP_VERSION=$(echo "$OLD_VERSION" | sed -E 's/-beta.*//')
     else
-        # Otherwise, bump the patch version string (e.g. 2.0.6 -> 2.0.7)
-        APP_VERSION=$(echo "$OLD_VERSION" | awk -F. '{$NF = $NF + 1;} 1' | sed 's/ /./g')
+        # Already a release version, keep as-is
+        APP_VERSION="$OLD_VERSION"
     fi
 elif [[ "$1" == "--no-bump" ]]; then
     # Keep the current version

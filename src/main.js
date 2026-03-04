@@ -161,6 +161,7 @@ import { Worker } from './worker.js';
                 onImport: () => Core.importList(),
                 onExport: () => Core.exportHistory(),
                 onRetryFailed: () => Core.retryFailedQueue(),
+                onReport: () => Core.showReportDialog(),
                 onStop: () => { if (confirm('停止?')) Storage.set(CONFIG.KEYS.BG_CMD, 'stop'); },
                 onModeToggle: () => {
                     const cur = Storage.get(CONFIG.KEYS.MAC_MODE) || 'background';

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         留友封 (Threads 封鎖工具)
 // @namespace    http://tampermonkey.net/
-// @version      2.1.1
+// @version      2.1.2-beta1
 // @description  Modular Refactor Build
 // @author       海哥
 // @match        https://www.threads.net/*
@@ -14,10 +14,10 @@
 
 (function() {
     'use strict';
-    console.log('[HegeBlock] Content Script Injected, Version: 2.1.1');
+    console.log('[HegeBlock] Content Script Injected, Version: 2.1.2-beta1');
 // --- config.js ---
 const CONFIG = {
-    VERSION: '2.1.1', // Official Release: Worker UI 2.0 & Cooldown Protection
+    VERSION: '2.1.2-beta1', // Official Release: Worker UI 2.0 & Cooldown Protection
     DEBUG_MODE: true,
     DB_KEY: 'hege_block_db_v1',
     KEYS: {
@@ -35,7 +35,8 @@ const CONFIG = {
         FAILED_QUEUE: 'hege_failed_queue',
         COOLDOWN_QUEUE: 'hege_cooldown_queue',
         DB_TIMESTAMPS: 'hege_block_timestamps',
-        VERIFY_PENDING: 'hege_verify_pending'
+        VERIFY_PENDING: 'hege_verify_pending',
+        DEBUG_LOG: 'hege_debug_log'
     },
     SELECTORS: {
         MORE_SVG: 'svg[aria-label="更多"], svg[aria-label="More"]',
@@ -376,6 +377,9 @@ const UI = {
                     <span class="status" id="hege-failed-count">0</span>
                 </div>
                 
+                <div class="hege-menu-item" id="hege-report-item" style="display:none;">
+                    <span>🐛 回報問題</span>
+                </div>
 
                 <div class="hege-menu-item danger" id="hege-clear-db-item">
                     <span>清除所有歷史</span>
@@ -412,6 +416,7 @@ const UI = {
         bindClick('hege-import-item', callbacks.onImport);
         bindClick('hege-export-item', callbacks.onExport);
         bindClick('hege-retry-failed-item', callbacks.onRetryFailed);
+        bindClick('hege-report-item', callbacks.onReport);
         bindClick('hege-stop-btn-item', callbacks.onStop);
 
 
@@ -1067,6 +1072,7 @@ const Core = {
 
         const failedQueue = Storage.getJSON(CONFIG.KEYS.FAILED_QUEUE, []);
         const retryItem = document.getElementById('hege-retry-failed-item');
+        const reportItem = document.getElementById('hege-report-item');
         if (retryItem) {
             if (failedQueue.length > 0) {
                 retryItem.style.display = 'flex';
@@ -1075,6 +1081,9 @@ const Core = {
             } else {
                 retryItem.style.display = 'none';
             }
+        }
+        if (reportItem) {
+            reportItem.style.display = failedQueue.length > 0 ? 'flex' : 'none';
         }
 
         let badgeText = Core.pendingUsers.size > 0 ? `(${Core.pendingUsers.size})` : '';
@@ -1219,6 +1228,154 @@ const Core = {
         } else if (isRunning) {
             UI.showToast('已合併至正在運行的背景任務');
         }
+    },
+
+    collectDiagnostics: () => {
+        const isIPad = navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || isIPad;
+        const platform = isIOS ? 'iOS/iPad' : 'Desktop';
+
+        // Detect Threads UI language from aria labels
+        const svgs = document.querySelectorAll('svg[aria-label]');
+        const ariaLabels = Array.from(svgs).map(s => s.getAttribute('aria-label'));
+        const hasZh = ariaLabels.some(l => /[\u4e00-\u9fff]/.test(l));
+        const hasEn = ariaLabels.some(l => /^[A-Za-z ]+$/.test(l));
+        const langDetected = hasZh ? 'zh' : (hasEn ? 'en' : 'unknown');
+
+        // SVG structure of "More" buttons
+        const moreSvgs = document.querySelectorAll('svg[aria-label="更多"], svg[aria-label="More"]');
+        const svgDetails = Array.from(moreSvgs).map(s => {
+            const hasCircle = !!s.querySelector('circle');
+            const pathCount = s.querySelectorAll('path').length;
+            const vb = s.getAttribute('viewBox');
+            return `circle=${hasCircle},paths=${pathCount},vb=${vb}`;
+        });
+
+        // Menu items if any are open
+        const menuItems = document.querySelectorAll('div[role="menuitem"]');
+        const menuTexts = Array.from(menuItems).map(el => (el.innerText || '').trim().substring(0, 30));
+
+        // Dialog info
+        const dialogs = document.querySelectorAll('div[role="dialog"]');
+        const dialogTexts = Array.from(dialogs).map(d => (d.innerText || '').trim().substring(0, 80));
+
+        // Queue states
+        const bgQueue = Storage.getJSON(CONFIG.KEYS.BG_QUEUE, []);
+        const failedQueue = Storage.getJSON(CONFIG.KEYS.FAILED_QUEUE, []);
+        const cooldownQueue = Storage.getJSON(CONFIG.KEYS.COOLDOWN_QUEUE, []);
+        const cooldownUntil = parseInt(Storage.get(CONFIG.KEYS.COOLDOWN) || '0');
+        const cooldownActive = cooldownUntil > Date.now();
+        const cooldownRemain = cooldownActive ? Math.ceil((cooldownUntil - Date.now()) / (1000 * 60 * 60)) + 'h' : 'N/A';
+
+        // Worker stats
+        const workerStats = Storage.getJSON('hege_worker_stats', {});
+        const bgStatus = Storage.getJSON(CONFIG.KEYS.BG_STATUS, {});
+
+        // Debug logs
+        let debugLogs = [];
+        try {
+            debugLogs = JSON.parse(localStorage.getItem(CONFIG.KEYS.DEBUG_LOG) || '[]');
+        } catch (e) { }
+
+        // Checkbox states
+        const checkboxes = document.querySelectorAll('.hege-checkbox-container');
+        const cbChecked = Array.from(checkboxes).filter(el => el.classList.contains('checked')).length;
+        const cbFinished = Array.from(checkboxes).filter(el => el.classList.contains('finished')).length;
+
+        // UserScript manager detection
+        let injectionMethod = 'unknown';
+        if (typeof GM_info !== 'undefined') injectionMethod = 'Tampermonkey/Userscripts';
+        else if (document.querySelector('script[src*="content.js"]')) injectionMethod = 'Chrome Extension';
+        else if (chrome && chrome.runtime) injectionMethod = 'Chrome Extension';
+
+        // Build report
+        const lines = [
+            `🛡️ 留友封 診斷報告`,
+            `版本: ${CONFIG.VERSION}`,
+            `平台: ${platform} | ${navigator.platform} | TP:${navigator.maxTouchPoints}`,
+            `UA: ${navigator.userAgent}`,
+            `注入: ${injectionMethod}`,
+            `語言: ${langDetected} (偵測自 aria-labels)`,
+            `URL: ${location.pathname}${location.search}`,
+            ``,
+            `── 佇列狀態 ──`,
+            `待處理: ${bgQueue.length} | 失敗: ${failedQueue.length} | 冷卻備份: ${cooldownQueue.length}`,
+            `冷卻中: ${cooldownActive ? '⚠️ 是 (剩餘 ' + cooldownRemain + ')' : '❌ 否'}`,
+            `Worker: ${bgStatus.state || 'idle'} | 最後更新: ${bgStatus.lastUpdate ? new Date(bgStatus.lastUpdate).toLocaleTimeString() : 'N/A'}`,
+            ``,
+            `── Worker 統計 ──`,
+            `成功: ${workerStats.stats?.success ?? 'N/A'} | 跳過: ${workerStats.stats?.skipped ?? 'N/A'} | 失敗: ${workerStats.stats?.failed ?? 'N/A'}`,
+            `驗證等級: ${workerStats.verifyLevel ?? 'N/A'} | 連續失敗: ${workerStats.consecutiveFails ?? 'N/A'}`,
+            `Session 名單: ${workerStats.sessionQueue?.length ?? 'N/A'} | 初始 Total: ${workerStats.initialTotal ?? 'N/A'}`,
+            ``,
+            `── DOM 快照 ──`,
+            `更多按鈕 SVG(${moreSvgs.length}): ${svgDetails.length > 0 ? svgDetails.join(' | ') : '未找到'}`,
+            `頁面 aria-labels(${ariaLabels.length}): ${JSON.stringify([...new Set(ariaLabels)])}`,
+            `menuitem(${menuTexts.length}): ${menuTexts.length > 0 ? JSON.stringify(menuTexts) : '無'}`,
+            `dialogs(${dialogs.length}): ${dialogTexts.length > 0 ? JSON.stringify(dialogTexts) : '無'}`,
+            `checkbox: ${checkboxes.length}個 (✅${cbFinished} ☑️${cbChecked})`,
+            ``,
+            `── 失敗清單 ──`,
+            failedQueue.length > 0 ? failedQueue.join(', ') : '(空)',
+            ``,
+            `── 執行紀錄 (最近${debugLogs.length}筆) ──`,
+            ...debugLogs
+        ];
+
+        return lines.join('\n');
+    },
+
+    showReportDialog: () => {
+        // Remove existing dialog if any
+        const existing = document.getElementById('hege-report-dialog');
+        if (existing) existing.remove();
+
+        const overlay = document.createElement('div');
+        overlay.id = 'hege-report-dialog';
+        overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:999999;display:flex;align-items:center;justify-content:center;font-family:system-ui,-apple-system,sans-serif;';
+
+        const dialog = document.createElement('div');
+        dialog.style.cssText = 'background:#1a1a2e;color:#e0e0e0;border-radius:16px;padding:28px 24px;max-width:400px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.5);text-align:center;';
+
+        Utils.setHTML(dialog, `
+            <div style="font-size:20px;font-weight:700;margin-bottom:16px;">🐛 回報問題</div>
+            <div style="font-size:14px;line-height:1.6;color:#aaa;margin-bottom:20px;text-align:left;">
+                如果你有大量的失敗，並確認不是被 Meta 限制了，按下「複製 Debug 訊息」回報給開發者，協助我把這個程式修正的更好！感謝 🙏
+            </div>
+            <div id="hege-report-copy-btn" style="background:linear-gradient(135deg,#4cd964,#30d158);color:#fff;font-size:16px;font-weight:700;padding:14px;border-radius:12px;cursor:pointer;user-select:none;margin-bottom:12px;transition:transform 0.15s;">
+                📋 複製 Debug 訊息
+            </div>
+            <div id="hege-report-copy-status" style="font-size:13px;color:#4cd964;margin-bottom:16px;display:none;">✅ 已複製到剪貼簿！請貼給開發者</div>
+            <a href="https://www.threads.net/@skiseiju" target="_blank" style="display:inline-block;background:#333;color:#fff;font-size:14px;padding:10px 20px;border-radius:10px;text-decoration:none;margin-bottom:8px;transition:background 0.2s;">
+                💬 前往開發者 Threads (@skiseiju)
+            </a>
+            <div id="hege-report-close" style="font-size:13px;color:#666;cursor:pointer;margin-top:12px;padding:8px;">關閉</div>
+        `);
+
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        // Copy button handler
+        const copyBtn = document.getElementById('hege-report-copy-btn');
+        const copyStatus = document.getElementById('hege-report-copy-status');
+        if (copyBtn) {
+            copyBtn.addEventListener('click', () => {
+                const report = Core.collectDiagnostics();
+                navigator.clipboard.writeText(report).then(() => {
+                    if (copyStatus) copyStatus.style.display = 'block';
+                    copyBtn.textContent = '✅ 已複製！';
+                    copyBtn.style.background = '#333';
+                }).catch(() => {
+                    // Fallback: prompt
+                    prompt('請手動複製以下訊息：', report);
+                });
+            });
+        }
+
+        // Close handlers
+        const closeBtn = document.getElementById('hege-report-close');
+        if (closeBtn) closeBtn.addEventListener('click', () => overlay.remove());
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
     }
 };
 
@@ -1295,6 +1452,14 @@ const Worker = {
                     logEl.prepend(line); // Newest on top
                 }
             }
+            // Persist to localStorage buffer (always, regardless of DEBUG_MODE)
+            try {
+                const logs = JSON.parse(localStorage.getItem(CONFIG.KEYS.DEBUG_LOG) || '[]');
+                logs.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
+                // Keep last 100 entries
+                if (logs.length > 100) logs.splice(0, logs.length - 100);
+                localStorage.setItem(CONFIG.KEYS.DEBUG_LOG, JSON.stringify(logs));
+            } catch (e) { }
         };
         window.hegeLog('[BG-INIT] Worker Started');
 
@@ -1854,7 +2019,24 @@ const Worker = {
             }
 
             if (!profileBtn) {
-                console.log('找不到更多按鈕');
+                // Diagnostic dump: collect all SVG info on page
+                const allSvgs = document.querySelectorAll('svg[aria-label]');
+                const svgLabels = Array.from(allSvgs).map(s => s.getAttribute('aria-label'));
+                const moreSvgs = document.querySelectorAll('svg[aria-label="更多"], svg[aria-label="More"]');
+                const svgDetails = Array.from(moreSvgs).map(s => {
+                    const hasCircle = !!s.querySelector('circle');
+                    const pathCount = s.querySelectorAll('path').length;
+                    const vb = s.getAttribute('viewBox');
+                    return `circle=${hasCircle},paths=${pathCount},viewBox=${vb}`;
+                });
+                const dialogCount = document.querySelectorAll('div[role="dialog"]').length;
+                if (window.hegeLog) {
+                    window.hegeLog(`[DIAG] @${user} 找不到更多按鈕`);
+                    window.hegeLog(`[DIAG] URL: ${location.pathname}`);
+                    window.hegeLog(`[DIAG] 頁面 SVG aria-labels(${svgLabels.length}): ${JSON.stringify(svgLabels)}`);
+                    window.hegeLog(`[DIAG] 更多按鈕 SVG(${moreSvgs.length}): ${JSON.stringify(svgDetails)}`);
+                    window.hegeLog(`[DIAG] Dialogs: ${dialogCount}`);
+                }
                 return 'failed';
             }
 
@@ -1894,6 +2076,18 @@ const Worker = {
                         setStep('已封鎖 (略過)');
                         return 'already_blocked';
                     }
+                }
+                // Diagnostic dump: collect all menu item text
+                const allMenuItems = document.querySelectorAll('div[role="menuitem"]');
+                const menuTexts = Array.from(allMenuItems).map(el => (el.innerText || el.textContent || '').trim().substring(0, 30));
+                const allBtns = document.querySelectorAll('div[role="button"]');
+                const btnTexts = Array.from(allBtns).map(el => (el.innerText || el.textContent || '').trim().substring(0, 30)).filter(t => t.length > 0);
+                const dialogCount = document.querySelectorAll('div[role="dialog"]').length;
+                if (window.hegeLog) {
+                    window.hegeLog(`[DIAG] @${user} 找不到封鎖鈕`);
+                    window.hegeLog(`[DIAG] menuitem(${menuTexts.length}): ${JSON.stringify(menuTexts)}`);
+                    window.hegeLog(`[DIAG] buttons(${btnTexts.length}): ${JSON.stringify(btnTexts.slice(0, 15))}`);
+                    window.hegeLog(`[DIAG] Dialogs: ${dialogCount}`);
                 }
                 setStep('錯誤: 找不到封鎖鈕');
                 return 'failed';
@@ -2120,6 +2314,7 @@ const Worker = {
                 onImport: () => Core.importList(),
                 onExport: () => Core.exportHistory(),
                 onRetryFailed: () => Core.retryFailedQueue(),
+                onReport: () => Core.showReportDialog(),
                 onStop: () => { if (confirm('停止?')) Storage.set(CONFIG.KEYS.BG_CMD, 'stop'); },
                 onModeToggle: () => {
                     const cur = Storage.get(CONFIG.KEYS.MAC_MODE) || 'background';

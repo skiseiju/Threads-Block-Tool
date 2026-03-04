@@ -70,6 +70,14 @@ export const Worker = {
                     logEl.prepend(line); // Newest on top
                 }
             }
+            // Persist to localStorage buffer (always, regardless of DEBUG_MODE)
+            try {
+                const logs = JSON.parse(localStorage.getItem(CONFIG.KEYS.DEBUG_LOG) || '[]');
+                logs.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
+                // Keep last 100 entries
+                if (logs.length > 100) logs.splice(0, logs.length - 100);
+                localStorage.setItem(CONFIG.KEYS.DEBUG_LOG, JSON.stringify(logs));
+            } catch (e) { }
         };
         window.hegeLog('[BG-INIT] Worker Started');
 
@@ -629,7 +637,24 @@ export const Worker = {
             }
 
             if (!profileBtn) {
-                console.log('找不到更多按鈕');
+                // Diagnostic dump: collect all SVG info on page
+                const allSvgs = document.querySelectorAll('svg[aria-label]');
+                const svgLabels = Array.from(allSvgs).map(s => s.getAttribute('aria-label'));
+                const moreSvgs = document.querySelectorAll('svg[aria-label="更多"], svg[aria-label="More"]');
+                const svgDetails = Array.from(moreSvgs).map(s => {
+                    const hasCircle = !!s.querySelector('circle');
+                    const pathCount = s.querySelectorAll('path').length;
+                    const vb = s.getAttribute('viewBox');
+                    return `circle=${hasCircle},paths=${pathCount},viewBox=${vb}`;
+                });
+                const dialogCount = document.querySelectorAll('div[role="dialog"]').length;
+                if (window.hegeLog) {
+                    window.hegeLog(`[DIAG] @${user} 找不到更多按鈕`);
+                    window.hegeLog(`[DIAG] URL: ${location.pathname}`);
+                    window.hegeLog(`[DIAG] 頁面 SVG aria-labels(${svgLabels.length}): ${JSON.stringify(svgLabels)}`);
+                    window.hegeLog(`[DIAG] 更多按鈕 SVG(${moreSvgs.length}): ${JSON.stringify(svgDetails)}`);
+                    window.hegeLog(`[DIAG] Dialogs: ${dialogCount}`);
+                }
                 return 'failed';
             }
 
@@ -669,6 +694,18 @@ export const Worker = {
                         setStep('已封鎖 (略過)');
                         return 'already_blocked';
                     }
+                }
+                // Diagnostic dump: collect all menu item text
+                const allMenuItems = document.querySelectorAll('div[role="menuitem"]');
+                const menuTexts = Array.from(allMenuItems).map(el => (el.innerText || el.textContent || '').trim().substring(0, 30));
+                const allBtns = document.querySelectorAll('div[role="button"]');
+                const btnTexts = Array.from(allBtns).map(el => (el.innerText || el.textContent || '').trim().substring(0, 30)).filter(t => t.length > 0);
+                const dialogCount = document.querySelectorAll('div[role="dialog"]').length;
+                if (window.hegeLog) {
+                    window.hegeLog(`[DIAG] @${user} 找不到封鎖鈕`);
+                    window.hegeLog(`[DIAG] menuitem(${menuTexts.length}): ${JSON.stringify(menuTexts)}`);
+                    window.hegeLog(`[DIAG] buttons(${btnTexts.length}): ${JSON.stringify(btnTexts.slice(0, 15))}`);
+                    window.hegeLog(`[DIAG] Dialogs: ${dialogCount}`);
                 }
                 setStep('錯誤: 找不到封鎖鈕');
                 return 'failed';

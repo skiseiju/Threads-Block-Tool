@@ -151,6 +151,9 @@ export const UI = {
                     <span class="status" id="hege-failed-count">0</span>
                 </div>
                 
+                <div class="hege-menu-item" id="hege-report-item" style="display:none;">
+                    <span>🐛 回報問題</span>
+                </div>
 
                 <div class="hege-menu-item danger" id="hege-clear-db-item">
                     <span>清除所有歷史</span>
@@ -187,6 +190,7 @@ export const UI = {
         bindClick('hege-import-item', callbacks.onImport);
         bindClick('hege-export-item', callbacks.onExport);
         bindClick('hege-retry-failed-item', callbacks.onRetryFailed);
+        bindClick('hege-report-item', callbacks.onReport);
         bindClick('hege-stop-btn-item', callbacks.onStop);
 
 

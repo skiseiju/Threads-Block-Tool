@@ -1,5 +1,5 @@
 export const CONFIG = {
-    VERSION: '2.2.1-beta3', // Bug Report System & Stability
+    VERSION: '2.2.0', // Official Release: Worker UI 2.0 & Cooldown Protection
     DEBUG_MODE: true,
     DB_KEY: 'hege_block_db_v1',
     KEYS: {
@@ -19,6 +19,16 @@ export const CONFIG = {
         DB_TIMESTAMPS: 'hege_block_timestamps',
         VERIFY_PENDING: 'hege_verify_pending',
         DEBUG_LOG: 'hege_debug_log'
+    },
+    LIMITS: {
+        OVERLAY_ZINDEX: 999999,
+        CHECK_INTERVAL_MS: 500,
+        MAX_QUEUE_SIZE: 50,
+        MIN_BLOCK_DELAY: 3500,
+        MAX_BLOCK_DELAY: 6000,
+        CONCURRENT_WORKERS: 8,
+        ERROR_COOLDOWN_MINUTES: 5,
+        RATE_LIMIT_COOLDOWN_MINUTES: 30,
     },
     SELECTORS: {
         MORE_SVG: 'svg[aria-label="更多"], svg[aria-label="More"]',

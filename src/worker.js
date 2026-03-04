@@ -8,6 +8,7 @@ export const Worker = {
     sessionQueue: [],          // 本次 session 完整名單快照
     verifyLevel: 0,            // 0=每5次, 1=每3次, 2=每次
     verifyCount: 0,            // 自上次驗證以來的計數
+    consecutiveRateLimits: Worker.stats.consecutiveRateLimits || 0,
     consecutiveFails: 0,       // Level 2 連續失敗計數
 
     saveStats: () => {
@@ -403,6 +404,7 @@ export const Worker = {
 
                 // No verification needed — count as success directly
                 Worker.stats.success++;
+                Worker.consecutiveRateLimits = 0; // Reset rate-limit counter on success
                 Worker.saveStats();
                 let q = Storage.getJSON(CONFIG.KEYS.BG_QUEUE, []);
                 if (q.length > 0 && q[0] === targetUser) {
@@ -438,6 +440,35 @@ export const Worker = {
 
                 Worker.updateStatus('running', targetUser, 0, currentTotal);
                 Worker.runStep();
+            } else if (result === 'rate_limited') {
+                Worker.consecutiveRateLimits++;
+                Worker.saveStats();
+
+                if (Worker.consecutiveRateLimits >= 3) {
+                    if (window.hegeLog) window.hegeLog(`[⚠️警告] 選單異常達 ${Worker.consecutiveRateLimits} 次，偵測到 Meta 限制操作，強制冷卻`);
+                    await Worker.triggerCooldown();
+                    Worker.clearStats();
+                    return;
+                } else {
+                    if (window.hegeLog) window.hegeLog(`[⚠️警告] 選單異常 (第 ${Worker.consecutiveRateLimits}/3 次)，可能為網路延遲或初級限制，跳過並靜置...`);
+                    // treat as normal failure but give it a larger timeout to breathe
+                    Worker.stats.failed++;
+                    Worker.saveStats();
+
+                    let q = Storage.getJSON(CONFIG.KEYS.BG_QUEUE, []);
+                    if (q.length > 0 && q[0] === targetUser) {
+                        q.shift();
+                        Storage.setJSON(CONFIG.KEYS.BG_QUEUE, q);
+                    }
+                    let fq = new Set(Storage.getJSON(CONFIG.KEYS.FAILED_QUEUE, []));
+                    fq.add(targetUser);
+                    Storage.setJSON(CONFIG.KEYS.FAILED_QUEUE, [...fq]);
+
+                    Worker.updateStatus('running', targetUser, 0, currentTotal);
+                    await Utils.sleep(3000); // extra breather
+                    Worker.runStep();
+                }
+                return;
             } else if (result === 'cooldown') {
                 Worker.updateStatus('error', '⚠️ 頻率限制觸發，請稍後再試');
                 const stopBtn = document.getElementById('hege-worker-stop');
@@ -616,59 +647,24 @@ export const Worker = {
             await Utils.sleep(2500);
 
             // 1. Wait for "More" button (Polling up to 12s)
-            //    Strategy: Find the profile "More" button, NOT the sidebar navigation one.
-            //    Tier 1: Find "More" SVG near profile elements (追蹤/Follow button)
-            //    Tier 2: Position filter - skip far-left sidebar SVGs (x < 100px)
-            //    Tier 3: Last resort - any "More" SVG
             let profileBtn = null;
 
             for (let i = 0; i < 25; i++) {
                 const moreSvgs = document.querySelectorAll('svg[aria-label="更多"], svg[aria-label="More"]');
-
-                // Tier 1: Find "More" SVG that shares a container with profile elements
-                if (!profileBtn) {
-                    for (let svg of moreSvgs) {
-                        let parent = svg.closest('div[role="button"]');
-                        if (!parent) continue;
-                        // Walk up to find a container also holding "追蹤"/"Follow"/"粉絲"/"followers"
-                        let container = parent.parentElement;
-                        for (let d = 0; d < 6 && container; d++) {
-                            const text = container.textContent || '';
-                            if ((text.includes('追蹤') || text.includes('Follow')) &&
-                                (text.includes('粉絲') || text.includes('follower'))) {
-                                profileBtn = parent;
-                                break;
-                            }
-                            container = container.parentElement;
-                        }
-                        if (profileBtn) break;
-                    }
-                }
-
-                // Tier 2: Position-based - skip SVGs in far-left sidebar
-                if (!profileBtn) {
-                    for (let svg of moreSvgs) {
-                        const rect = svg.getBoundingClientRect();
-                        if (rect.width === 0) continue; // Hidden
-                        if (rect.x < 100) continue;     // Sidebar area
+                for (let svg of moreSvgs) {
+                    if (svg.querySelector('circle') && svg.querySelectorAll('path').length >= 3) {
                         profileBtn = svg.closest('div[role="button"]');
                         if (profileBtn) break;
                     }
                 }
 
-                // Tier 3: Last resort
+                // Fallback
                 if (!profileBtn && moreSvgs.length > 0) {
                     profileBtn = moreSvgs[0].closest('div[role="button"]');
                 }
 
                 if (profileBtn) break;
                 await Utils.sleep(500);
-            }
-
-            // Log which tier was used
-            if (profileBtn && window.hegeLog) {
-                const rect = profileBtn.getBoundingClientRect();
-                window.hegeLog(`[DIAG] 更多按鈕 x=${Math.round(rect.x)} y=${Math.round(rect.y)}`);
             }
 
             if (!profileBtn) {
@@ -694,10 +690,23 @@ export const Worker = {
             }
 
             setStep('開啟選單...');
+            if (window.hegeLog && profileBtn) {
+                const rect = profileBtn.getBoundingClientRect();
+                let parentText = '';
+                try {
+                    let parent = profileBtn.parentElement;
+                    for (let p = 0; p < 3 && parent; p++) {
+                        parentText += (parent.textContent || '').substring(0, 10).replace(/\n/g, '') + '|';
+                        parent = parent.parentElement;
+                    }
+                } catch (e) { }
+                window.hegeLog(`[DIAG] 準備點擊按鈕 x=${Math.round(rect.x)}, y=${Math.round(rect.y)}, 父層文案=${parentText}`);
+            }
             await Utils.sleep(500);
             profileBtn.scrollIntoView({ block: 'center', inline: 'center' });
             await Utils.sleep(500);
             Utils.simClick(profileBtn);
+
 
             // 2. Wait for Menu (Polling up to 8s, retry click if menu doesn't open)
             let blockBtn = null;
@@ -755,8 +764,8 @@ export const Worker = {
                     window.hegeLog(`[DIAG] buttons(${btnTexts.length}): ${JSON.stringify(btnTexts.slice(0, 15))}`);
                     window.hegeLog(`[DIAG] Dialogs: ${dialogCount}`);
                 }
-                setStep('錯誤: 找不到封鎖鈕');
-                return 'failed';
+                setStep('錯誤: 找不到封鎖鈕 (可能遭限制)');
+                return 'rate_limited';
             }
 
             setStep('點擊封鎖...');

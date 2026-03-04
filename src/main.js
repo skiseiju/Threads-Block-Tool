@@ -176,7 +176,7 @@ import { Worker } from './worker.js';
 
             // Sync Logic (Restored from beta46)
             window.addEventListener('storage', (e) => {
-                if (e.key === CONFIG.KEYS.BG_STATUS || e.key === CONFIG.KEYS.DB_KEY || e.key === CONFIG.KEYS.BG_QUEUE || e.key === CONFIG.KEYS.COOLDOWN || e.key === CONFIG.KEYS.COOLDOWN_QUEUE) {
+                if (e.key === CONFIG.KEYS.BG_STATUS || e.key === CONFIG.KEYS.DB_KEY || e.key === CONFIG.KEYS.BG_QUEUE || e.key === CONFIG.KEYS.COOLDOWN || e.key === CONFIG.KEYS.COOLDOWN_QUEUE || e.key === CONFIG.KEYS.FAILED_QUEUE) {
                     Storage.invalidate(e.key); // Force cache clear so getJSON fetches fresh data
                     Core.updateControllerUI();
                 }
@@ -187,6 +187,7 @@ import { Worker } from './worker.js';
                 Storage.invalidate(CONFIG.KEYS.BG_QUEUE);
                 Storage.invalidate(CONFIG.KEYS.COOLDOWN);
                 Storage.invalidate(CONFIG.KEYS.COOLDOWN_QUEUE);
+                Storage.invalidate(CONFIG.KEYS.FAILED_QUEUE);
                 Core.updateControllerUI();
             }, 2000); // Polling backup
 

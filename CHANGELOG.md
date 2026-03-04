@@ -4,6 +4,9 @@
 
 ## v2.1.1 — 冷卻機制精修與佇列保護
 
+### beta7
+*   **修正失敗重試按鈕不顯示**：`main.js` 的 `storage` 事件監聽與 polling 備份缺少 `FAILED_QUEUE`，導致 Controller 頁面無法偵測到失敗清單更新，重試按鈕始終隱藏。
+
 ### beta6
 *   **驗證機制改為 Reload 驗證**：封鎖成功後不再於同頁面直接驗證（React 可能未同步更新導致誤判），改為存入待驗證 flag 後 `location.reload()` 重新載入頁面，在 fresh DOM 上重新開啟選單確認「解除封鎖」是否出現，大幅降低驗證誤判率。
 

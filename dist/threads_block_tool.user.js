@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         留友封 (Threads 封鎖工具)
 // @namespace    http://tampermonkey.net/
-// @version      2.1.1-beta4
+// @version      2.1.1-beta7
 // @description  Modular Refactor Build
 // @author       海哥
 // @match        https://www.threads.net/*
@@ -14,10 +14,10 @@
 
 (function() {
     'use strict';
-    console.log('[HegeBlock] Content Script Injected, Version: 2.1.1-beta4');
+    console.log('[HegeBlock] Content Script Injected, Version: 2.1.1-beta7');
 // --- config.js ---
 const CONFIG = {
-    VERSION: '2.1.1-beta4', // Official Release: Worker UI 2.0 & Cooldown Protection
+    VERSION: '2.1.1-beta7', // Official Release: Worker UI 2.0 & Cooldown Protection
     DEBUG_MODE: true,
     DB_KEY: 'hege_block_db_v1',
     KEYS: {
@@ -34,7 +34,8 @@ const CONFIG = {
         DISCLAIMER_AGREED: 'hege_disclaimer_agreed_v2_1',
         FAILED_QUEUE: 'hege_failed_queue',
         COOLDOWN_QUEUE: 'hege_cooldown_queue',
-        DB_TIMESTAMPS: 'hege_block_timestamps'
+        DB_TIMESTAMPS: 'hege_block_timestamps',
+        VERIFY_PENDING: 'hege_verify_pending'
     },
     SELECTORS: {
         MORE_SVG: 'svg[aria-label="更多"], svg[aria-label="More"]',
@@ -1468,10 +1469,86 @@ const Worker = {
     runStep: async () => {
         if (Storage.get(CONFIG.KEYS.BG_CMD) === 'stop') {
             Storage.remove(CONFIG.KEYS.BG_CMD);
+            Storage.remove(CONFIG.KEYS.VERIFY_PENDING);
             Worker.updateStatus('stopped', '已停止');
             Worker.clearStats();
             Worker.navigateBack();
             return;
+        }
+
+        // Handle pending verification (after page reload)
+        const verifyPending = Storage.get(CONFIG.KEYS.VERIFY_PENDING);
+        if (verifyPending) {
+            Storage.remove(CONFIG.KEYS.VERIFY_PENDING);
+            const onVerifyPage = location.pathname.includes(`/@${verifyPending}`);
+            if (onVerifyPage) {
+                window.hegeLog(`[驗證] 頁面已刷新，驗證 @${verifyPending}`);
+                const verified = await Worker.verifyBlock(verifyPending);
+                let queue = Storage.getJSON(CONFIG.KEYS.BG_QUEUE, []);
+                const currentTotal = queue.length;
+
+                if (!verified) {
+                    window.hegeLog(`[驗證] @${verifyPending} 驗證失敗 (靜默失敗)`);
+                    if (Worker.verifyLevel < 2) {
+                        Worker.verifyLevel++;
+                        Worker.consecutiveFails = 0;
+                        window.hegeLog(`[驗證] 升級至 Level ${Worker.verifyLevel}`);
+                    } else {
+                        Worker.consecutiveFails++;
+                        window.hegeLog(`[驗證] Level 2 連續失敗 ${Worker.consecutiveFails}/5`);
+                        if (Worker.consecutiveFails >= 5) {
+                            await Worker.triggerCooldown();
+                            return;
+                        }
+                    }
+                    Worker.stats.failed++;
+                    Worker.saveStats();
+                    if (queue.length > 0 && queue[0] === verifyPending) {
+                        queue.shift();
+                        Storage.setJSON(CONFIG.KEYS.BG_QUEUE, queue);
+                    }
+                    let fq = new Set(Storage.getJSON(CONFIG.KEYS.FAILED_QUEUE, []));
+                    fq.add(verifyPending);
+                    Storage.setJSON(CONFIG.KEYS.FAILED_QUEUE, [...fq]);
+                    Worker.updateStatus('running', verifyPending, 0, currentTotal);
+                    Worker.runStep();
+                    return;
+                }
+
+                // Verification passed
+                Worker.consecutiveFails = 0;
+                Worker.stats.success++;
+                Worker.saveStats();
+                if (queue.length > 0 && queue[0] === verifyPending) {
+                    queue.shift();
+                    Storage.setJSON(CONFIG.KEYS.BG_QUEUE, queue);
+                }
+                let db = new Set(Storage.getJSON(CONFIG.KEYS.DB_KEY, []));
+                db.add(verifyPending);
+                Storage.setJSON(CONFIG.KEYS.DB_KEY, [...db]);
+                let ts = Storage.getJSON(CONFIG.KEYS.DB_TIMESTAMPS, {});
+                ts[verifyPending] = Date.now();
+                Storage.setJSON(CONFIG.KEYS.DB_TIMESTAMPS, ts);
+                Worker.updateStatus('running', verifyPending, 0, currentTotal);
+                Worker.runStep();
+                return;
+            } else {
+                // Not on the right page, skip verification and treat as success
+                window.hegeLog(`[驗證] 頁面不符，跳過驗證 @${verifyPending}`);
+                let queue = Storage.getJSON(CONFIG.KEYS.BG_QUEUE, []);
+                Worker.stats.success++;
+                Worker.saveStats();
+                if (queue.length > 0 && queue[0] === verifyPending) {
+                    queue.shift();
+                    Storage.setJSON(CONFIG.KEYS.BG_QUEUE, queue);
+                }
+                let db = new Set(Storage.getJSON(CONFIG.KEYS.DB_KEY, []));
+                db.add(verifyPending);
+                Storage.setJSON(CONFIG.KEYS.DB_KEY, [...db]);
+                let ts = Storage.getJSON(CONFIG.KEYS.DB_TIMESTAMPS, {});
+                ts[verifyPending] = Date.now();
+                Storage.setJSON(CONFIG.KEYS.DB_TIMESTAMPS, ts);
+            }
         }
 
         let queue = Storage.getJSON(CONFIG.KEYS.BG_QUEUE, []);
@@ -1530,46 +1607,18 @@ const Worker = {
 
             if (result === 'success' || result === 'already_blocked') {
                 // Post-block verification via adaptive sampling
-                let verified = true;
                 Worker.verifyCount++;
                 if (result === 'success' && Worker.shouldVerify()) {
-                    window.hegeLog(`[驗證] Level ${Worker.verifyLevel} 驗證 @${targetUser}`);
-                    verified = await Worker.verifyBlock(targetUser);
-                    if (!verified) {
-                        // 靜默失敗：升級驗證等級
-                        window.hegeLog(`[驗證] @${targetUser} 驗證失敗 (靜默失敗)`);
-                        if (Worker.verifyLevel < 2) {
-                            Worker.verifyLevel++;
-                            Worker.consecutiveFails = 0;
-                            window.hegeLog(`[驗證] 升級至 Level ${Worker.verifyLevel}`);
-                        } else {
-                            Worker.consecutiveFails++;
-                            window.hegeLog(`[驗證] Level 2 連續失敗 ${Worker.consecutiveFails}/5`);
-                            if (Worker.consecutiveFails >= 5) {
-                                await Worker.triggerCooldown();
-                                return;
-                            }
-                        }
-                        // Treat as failed
-                        Worker.stats.failed++;
-                        Worker.saveStats();
-                        let q = Storage.getJSON(CONFIG.KEYS.BG_QUEUE, []);
-                        if (q.length > 0 && q[0] === targetUser) {
-                            q.shift();
-                            Storage.setJSON(CONFIG.KEYS.BG_QUEUE, q);
-                        }
-                        let fq = new Set(Storage.getJSON(CONFIG.KEYS.FAILED_QUEUE, []));
-                        fq.add(targetUser);
-                        Storage.setJSON(CONFIG.KEYS.FAILED_QUEUE, [...fq]);
-                        Worker.updateStatus('running', targetUser, 0, currentTotal);
-                        Worker.runStep();
-                        return;
-                    } else {
-                        // 驗證成功：重置連續失敗計數
-                        Worker.consecutiveFails = 0;
-                    }
+                    // Save pending verification and reload page for fresh React state
+                    window.hegeLog(`[驗證] Level ${Worker.verifyLevel} 排定驗證 @${targetUser}，重新載入頁面...`);
+                    Storage.set(CONFIG.KEYS.VERIFY_PENDING, targetUser);
+                    Worker.saveStats();
+                    await Utils.sleep(1000);
+                    location.reload();
+                    return;
                 }
 
+                // No verification needed — count as success directly
                 Worker.stats.success++;
                 Worker.saveStats();
                 let q = Storage.getJSON(CONFIG.KEYS.BG_QUEUE, []);
@@ -1621,11 +1670,10 @@ const Worker = {
     },
 
     verifyBlock: async (user) => {
-        // Re-open the "More" menu to check if "Unblock" appears (= block succeeded)
+        // Page has been reloaded — check if "Unblock" appears in menu (= block succeeded)
         try {
-            // Level 2 needs longer wait for React to sync post-block state
-            const verifyDelay = Worker.verifyLevel >= 2 ? 3500 : 1500;
-            await Utils.sleep(verifyDelay);
+            // Wait for page to fully render after reload
+            await Utils.sleep(2500);
 
             // Find "More" button again
             let profileBtn = null;
@@ -1732,15 +1780,18 @@ const Worker = {
         Storage.setJSON(CONFIG.KEYS.DB_TIMESTAMPS, timestamps);
         Storage.setJSON(CONFIG.KEYS.DB_KEY, [...db]);
 
-        // 3. Backup full rollback queue to COOLDOWN_QUEUE
+        // 3. Backup rollback list + remaining unprocessed BG_QUEUE + FAILED_QUEUE to COOLDOWN_QUEUE
+        const remainingQueue = Storage.getJSON(CONFIG.KEYS.BG_QUEUE, []);
+        const failedQueue = Storage.getJSON(CONFIG.KEYS.FAILED_QUEUE, []);
         const fullRollbackList = [...Worker.sessionQueue, ...rollbackUsers];
-        Storage.setJSON(CONFIG.KEYS.COOLDOWN_QUEUE, fullRollbackList);
+        const fullCooldownQueue = [...new Set([...fullRollbackList, ...remainingQueue, ...failedQueue])];
+        Storage.setJSON(CONFIG.KEYS.COOLDOWN_QUEUE, fullCooldownQueue);
 
         // 4. Set cooldown timestamp (12 hours)
         const cooldownUntil = Date.now() + (12 * 60 * 60 * 1000);
         Storage.set(CONFIG.KEYS.COOLDOWN, cooldownUntil.toString());
 
-        // 5. Clear operational queues
+        // 5. Clear operational queues (all data now safely in COOLDOWN_QUEUE)
         Storage.setJSON(CONFIG.KEYS.BG_QUEUE, []);
         Storage.setJSON(CONFIG.KEYS.FAILED_QUEUE, []);
         Worker.clearStats();

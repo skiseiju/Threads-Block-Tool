@@ -91,8 +91,9 @@ location.reload();
 
 ### 跨分頁通訊
 
-- Worker 透過 `localStorage` (BG_STATUS, BG_QUEUE) 與主分頁同步狀態
+- Worker 透過 `localStorage` (BG_STATUS, BG_QUEUE, FAILED_QUEUE) 與主分頁同步狀態
 - 主分頁透過 `window.addEventListener('storage', ...)` + `setInterval` 輪詢更新 UI
+- 監聯的 key 包含：`BG_STATUS`, `DB_KEY`, `BG_QUEUE`, `COOLDOWN`, `COOLDOWN_QUEUE`, `FAILED_QUEUE`
 
 ---
 
@@ -172,6 +173,7 @@ Desktop: click(handleGlobalClick, capture: true) + ontouchend(stopPropagation)
 | `hege_cooldown_queue` | localStorage (JSON) | 觸發冷卻時備份的待處理佇列（含回滾名單） |
 | `hege_rate_limit_until` | localStorage | 12 小時冷卻解除的時間戳記 |
 | `hege_block_timestamps` | localStorage (JSON) | 紀錄最近 50 筆封鎖歷史用於智慧回滾 |
+| `hege_verify_pending` | localStorage | Reload 驗證時暫存的待驗證使用者名稱 |
 
 ---
 
@@ -213,7 +215,13 @@ Desktop: click(handleGlobalClick, capture: true) + ontouchend(stopPropagation)
    - Level 0 (預設): 每 5 次封鎖抽樣驗證 1 次。
    - Level 1 (發生過失敗): 每 3 次驗證 1 次。
    - Level 2 (頻繁失敗): 每次都驗證。
-2. **驗證方式 (`verifyBlock`)**：重啟該用戶的「更多」選單，若出現「解除封鎖 (Unblock)」代表真成功；若仍是「封鎖 (Block)」，代表遇到靜默限制。
+2. **Reload 驗證流程 (`verifyBlock`)**：
+   - 封鎖成功後，將使用者名稱存入 `VERIFY_PENDING` (localStorage)
+   - 等待 1 秒後執行 `location.reload()` 重新載入頁面
+   - 頁面載入後 `runStep` 偵測到 `VERIFY_PENDING` flag
+   - 在 fresh DOM 上重啟該用戶的「更多」選單
+   - 若出現「解除封鎖 (Unblock)」代表真成功；若仍是「封鎖 (Block)」代表靜默失敗
+   - **為何需要 reload**：封鎖後同頁面的 React Virtual DOM 可能尚未同步伺服器狀態，直接檢查會產生大量誤判。Reload 強制 React 重新渲染，確保驗證結果準確。
 3. 若 Level 2 連續 5 次驗證失敗，將視為遭到嚴格限制，強制進入**冷卻模式**。
 
 ---
@@ -228,7 +236,7 @@ Desktop: click(handleGlobalClick, capture: true) + ontouchend(stopPropagation)
 
 **執行流程 (智慧回滾 Auto-Rollback)**：
 1. 立即停止當前 Worker 迴圈。
-2. 將剩餘排隊名單全數移入 `COOLDOWN_QUEUE` (`hege_cooldown_queue`)。
+2. 將 `BG_QUEUE` 剩餘用戶、`FAILED_QUEUE` 全數與回滾名單合併，一起移入 `COOLDOWN_QUEUE` (`hege_cooldown_queue`)。
 3. **回滾歷史**：從 `DB_TIMESTAMPS` 中抓出最近 50 筆已當作成功的帳號，自動從 `DB_KEY` 中拔除，並塞回 `COOLDOWN_QUEUE`（防止這些人也是因靜默限制而漏鎖）。
 4. 設定 `hege_rate_limit_until` 為當下時間 + 12 小時。
-5. 前台 UI (`main.js`) 會因為 Storage Event 即時鎖住所有封鎖按鈕並顯示紅色警告。12 小時清醒後，名單將無損回填。
+5. 前台 UI (`main.js`) 會因為 Storage Event 即時鎖住所有封鎖按鈕並顯示紅色警告。12 小時清醒後，名單將無損回填至 `BG_QUEUE`。

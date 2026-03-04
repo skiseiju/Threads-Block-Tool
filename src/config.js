@@ -1,5 +1,5 @@
 export const CONFIG = {
-    VERSION: '2.1.1-beta5', // Official Release: Worker UI 2.0 & Cooldown Protection
+    VERSION: '2.1.1-beta6', // Official Release: Worker UI 2.0 & Cooldown Protection
     DEBUG_MODE: true,
     DB_KEY: 'hege_block_db_v1',
     KEYS: {
@@ -16,7 +16,8 @@ export const CONFIG = {
         DISCLAIMER_AGREED: 'hege_disclaimer_agreed_v2_1',
         FAILED_QUEUE: 'hege_failed_queue',
         COOLDOWN_QUEUE: 'hege_cooldown_queue',
-        DB_TIMESTAMPS: 'hege_block_timestamps'
+        DB_TIMESTAMPS: 'hege_block_timestamps',
+        VERIFY_PENDING: 'hege_verify_pending'
     },
     SELECTORS: {
         MORE_SVG: 'svg[aria-label="更多"], svg[aria-label="More"]',

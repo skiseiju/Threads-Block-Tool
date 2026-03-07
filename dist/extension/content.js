@@ -1,9 +1,9 @@
 (function() {
     'use strict';
-    console.log('[HegeBlock] Content Script Injected, Version: 2.2.3-beta1');
+    console.log('[HegeBlock] Content Script Injected, Version: 2.2.2');
 // --- config.js ---
 const CONFIG = {
-    VERSION: '2.2.3-beta1', // Enhancement: Expanded row-blocking support
+    VERSION: '2.2.2', // Enhancement: Expanded row-blocking support
     DEBUG_MODE: true,
     DB_KEY: 'hege_block_db_v1',
     KEYS: {

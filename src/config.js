@@ -1,6 +1,6 @@
 export const CONFIG = {
     VERSION: '2.2.2', // Enhancement: Expanded row-blocking support
-    DEBUG_MODE: true,
+    DEBUG_MODE: false,
     DB_KEY: 'hege_block_db_v1',
     KEYS: {
         PENDING: 'hege_pending_users',

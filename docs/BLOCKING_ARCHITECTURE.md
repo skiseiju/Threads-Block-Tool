@@ -284,3 +284,34 @@ svg[aria-label="更多"] viewBox="0 0 24 24"
 3. **回滾歷史**：從 `DB_TIMESTAMPS` 中抓出最近 50 筆已當作成功的帳號，自動從 `DB_KEY` 中拔除，並塞回 `COOLDOWN_QUEUE`（防止這些人也是因靜默限制而漏鎖）。
 4. 設定 `hege_rate_limit_until` 為當下時間 + 12 小時。
 5. 前台 UI (`main.js`) 會因為 Storage Event 即時鎖住所有封鎖按鈕並顯示紅色警告。12 小時清醒後，名單將無損回填至 `BG_QUEUE`。
+
+---
+
+## 📄 UserScript 標頭與相容性 (Headers & Compatibility)
+
+**檔案**：`build.sh`
+
+為確保 iOS/iPad 上的 Userscripts 擴充功能（如 Underpass Userscripts）能正確識別並載入腳本，必須遵守以下標頭規範：
+
+### 1. 協定萬用匹配
+iOS Safari 在某些頁面跳轉或 Universal Links 處理過程中，可能會暫時切換協定。必須包含 `http` 與 `*://`。
+```javascript
+// @match        http://*.threads.net/*
+// @match        *://*.threads.net/*
+```
+
+### 2. `@include` 後備方案
+某些版本的 Userscripts 應用程式對 `@match` 的解析較為嚴格（不支援部分萬用字元組合）。增加 `@include` 可提升載入成功率。
+```javascript
+// @include      *://*.threads.net/*
+// @include      *://threads.net/*
+```
+
+### 3. 域名補完
+必須同時涵蓋 `.net` 與 `.com`（Threads 歷史遺留域名），以及所有子域名（如 `www`, `l` 等）。
+```javascript
+// @match        *://*.threads.net/*
+// @match        *://*.threads.com/*
+```
+
+**違反以上規範將導致 iOS 使用者看到「No Matched Userscripts」錯誤。**

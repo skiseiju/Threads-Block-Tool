@@ -1,23 +1,33 @@
 // ==UserScript==
 // @name         留友封 (Threads 封鎖工具)
 // @namespace    http://tampermonkey.net/
-// @version      2.2.1
+// @version      2.2.3-beta1
 // @description  Modular Refactor Build
 // @author       海哥
 // @match        https://www.threads.net/*
 // @match        https://threads.net/*
 // @match        https://www.threads.com/*
 // @match        https://threads.com/*
+// @match        https://*.threads.net/*
+// @match        https://*.threads.com/*
+// @match        http://*.threads.net/*
+// @match        http://*.threads.com/*
+// @match        *://*.threads.net/*
+// @match        *://*.threads.com/*
+// @include      *://*.threads.net/*
+// @include      *://*.threads.com/*
+// @include      *://threads.net/*
+// @include      *://threads.com/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=threads.net
 // @grant        none
 // ==/UserScript==
 
 (function() {
     'use strict';
-    console.log('[HegeBlock] Content Script Injected, Version: 2.2.1');
+    console.log('[HegeBlock] Content Script Injected, Version: 2.2.3-beta1');
 // --- config.js ---
 const CONFIG = {
-    VERSION: '2.2.1', // Official Release: Worker UI 2.0 & Cooldown Protection
+    VERSION: '2.2.3-beta1', // Enhancement: Expanded row-blocking support
     DEBUG_MODE: true,
     DB_KEY: 'hege_block_db_v1',
     KEYS: {
@@ -36,14 +46,7 @@ const CONFIG = {
         COOLDOWN_QUEUE: 'hege_cooldown_queue',
         DB_TIMESTAMPS: 'hege_block_timestamps',
         VERIFY_PENDING: 'hege_verify_pending',
-        DEBUG_LOG: 'hege_debug_log',
-        POST_FALLBACK: 'hege_post_fallback'
-    },
-    LIMITS: {
-        OVERLAY_ZINDEX: 999999,
-        CHECK_INTERVAL_MS: 500,
-        MAX_QUEUE_SIZE: 50,
-        CONCURRENT_WORKERS: 8
+        DEBUG_LOG: 'hege_debug_log'
     },
     SELECTORS: {
         MORE_SVG: 'svg[aria-label="更多"], svg[aria-label="More"]',
@@ -87,8 +90,6 @@ const Utils = {
     log: (msg) => {
         if (!CONFIG.DEBUG_MODE) return;
         console.log(`[RightBlock] ${msg}`);
-        // Dispatch to UI console if available
-        if (window.hegeLogUI) window.hegeLogUI(msg);
     },
 
     simClick: (element) => {
@@ -477,11 +478,6 @@ const UI = {
         setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 500); }, duration);
     },
 
-    updateDebugLog: (msg) => {
-        // Console only requested
-        console.log(`[HegeUI] ${msg}`);
-    },
-
     anchorPanel: () => {
         const panel = document.getElementById('hege-panel');
         if (!panel) return;
@@ -605,6 +601,7 @@ const Core = {
 
         const hasAgreed = Storage.get(CONFIG.KEYS.DISCLAIMER_AGREED);
 
+        if (CONFIG.DEBUG_MODE) console.log(`[留友封] 初始化完成, 版本: ${CONFIG.VERSION}, Mobile: ${Utils.isMobile()}`);
         if (!hasAgreed) {
             UI.showDisclaimer(() => {
                 Storage.set(CONFIG.KEYS.DISCLAIMER_AGREED, 'true');
@@ -631,18 +628,90 @@ const Core = {
                 }
             }
             if (shouldScan) Core.scanAndInject();
-            if (dialogChanged) Core.injectDialogBlockAll();
+            if (dialogChanged) {
+                Core.injectDialogBlockAll();
+                Core.injectDialogCheckboxes();
+            }
         });
 
         Core.observer.observe(document.body, { childList: true, subtree: true });
 
-        // Backup polling (much slower) just in case
-        setInterval(Core.scanAndInject, 5000);
+        // Backup interval in case mutation observer misses React's synthetic updates
+        // Increased frequency from 1500 to 500ms to catch post-Loading states faster
+        setInterval(() => {
+            Core.scanAndInject();
+            Core.injectDialogBlockAll();
+            Core.injectDialogCheckboxes();
+        }, 500);
+
         Core.scanAndInject();
 
+        // [Debug] Global Click Tracker (User requested to keep this around for debugging)
+        if (CONFIG.DEBUG_MODE) {
+            document.body.addEventListener('click', (e) => {
+                let target = e.target;
+                let text = target.innerText || target.textContent || '';
+
+                // Try to find text from parent if the click was on an SVG or inner span
+                if (!text.trim() && target.parentElement) {
+                    text = target.parentElement.innerText || target.parentElement.textContent || '';
+                }
+
+                // Only log if we clicked something that looks like an action (has text or is an SVG)
+                const isSvg = target.closest('svg');
+                let logMsg = text.trim().substring(0, 30);
+                if (!logMsg && isSvg) logMsg = '[SVG Icon]';
+
+                if (logMsg) {
+                    console.log(`[留友封 Debug] Clicked: "${logMsg.replace(/\n/g, ' ')}"`);
+
+                    // Inspect DOM 1 second after click to see what React did to the headers
+                    setTimeout(() => {
+                        const headers = document.querySelectorAll('h1, h2');
+                        console.log(`[留友封 Debug] --- DOM State 1s after click ---`);
+                        console.log(`Found ${headers.length} headers total.`);
+                        headers.forEach((h, idx) => {
+                            const hText = (h.innerText || h.textContent || '').trim();
+                            if (hText) {
+                                const p = h.parentElement;
+                                const injected = p ? p.dataset.hegeDialogInjected : 'N/A';
+                                const hasBtn = p ? !!p.querySelector('.hege-block-all-btn') : false;
+
+                                // Check if inside dialog
+                                let isDialog = false;
+                                let curr = p;
+                                for (let i = 0; i < 8; i++) {
+                                    if (curr && curr.getAttribute('role') === 'dialog') { isDialog = true; break; }
+                                    if (curr) curr = curr.parentElement;
+                                }
+
+                                console.log(`Header [${idx}]: "${hText}" | inDialog: ${isDialog} | ParentInjectedFlag: ${injected} | BtnExists: ${hasBtn}`);
+
+                                // Log the entire parent structure HTML (stripped of too much detail)
+                                // if it's a dialog header we care about
+                                if (isDialog && ['讚', '引用', '轉發', '貼文動態', '活動', 'Likes'].some(t => hText.includes(t))) {
+                                    console.log(`[!] Target Header Parent HTML snippet:`, p ? p.outerHTML.substring(0, 300) + '...' : 'null');
+                                }
+                            }
+                        });
+                        console.log(`-------------------------------------------`);
+                    }, 1000);
+                }
+            }, true); // Capture phase to guarantee we catch it even if React calls stopPropagation()
+        }
+
         // React often swallows events or stops propagation.
-        // We now bind `addEventListener('click', Core.handleGlobalClick, true)` 
+        // We now bind `addEventListener('click', Core.handleGlobalClick, true)`
         // directly to the initialized containers instead of window to prevent click-through.
+    },
+
+    getTopContext: () => {
+        const dialogs = document.querySelectorAll('[role="dialog"]');
+        if (dialogs.length > 0) {
+            // Pick the last one which is usually the topmost in DOM
+            return dialogs[dialogs.length - 1];
+        }
+        return document.body;
     },
 
     saveToDB: (username) => {
@@ -657,33 +726,20 @@ const Core = {
     },
 
     injectDialogBlockAll: () => {
-        const headers = document.querySelectorAll('h1, h2');
+        const ctx = Core.getTopContext();
+        const isDialog = ctx !== document.body;
+
+        const headers = ctx.querySelectorAll('h1, h2, div[role="heading"] span');
         let header = null;
         let titleText = '';
 
         for (let h of headers) {
-            const text = h.innerText.trim();
-
-            // We want to lock onto these specific dialog keywords:
-            // "貼文動態" (Post Activity), "讚" (Likes), "Likes"
-            if (text.includes('貼文動態') || text.includes('讚') || text.includes('Likes')) {
-                // Ignore the main page "Threads" header if somehow it matched
-                if (text === 'Threads') continue;
-
-                // Extra safety: make sure it's inside a dialog or at least not the main nav
-                let isDialog = false;
-                let p = h.parentElement;
-                for (let i = 0; i < 6; i++) {
-                    if (p && p.getAttribute('role') === 'dialog') { isDialog = true; break; }
-                    if (p) p = p.parentElement;
-                }
-
-                // With specific keywords, we can be more confident, but let's enforce dialog
-                // or just allow it if the text is exactly '貼文動態' since it's highly specific.
-                if (isDialog || text === '貼文動態') {
+            const tempText = (h.innerText || h.textContent || '');
+            const text = tempText.trim();
+            if (text && text !== 'Threads') {
+                if (isDialog || ['貼文動態', '讚', 'Likes', '引用', '轉發', '活動'].some(t => text.includes(t))) {
                     header = h;
                     titleText = text;
-                    break;
                 }
             }
         }
@@ -693,13 +749,16 @@ const Core = {
         const headerContainer = header.parentElement;
         if (!headerContainer) return;
 
-        // Ensure we haven't already injected the button
-        if (headerContainer.dataset.hegeDialogInjected) return;
+        let localCtx = headerContainer;
+        for (let i = 0; i < 2; i++) {
+            if (localCtx.parentElement && localCtx.parentElement.tagName !== 'BODY') {
+                localCtx = localCtx.parentElement;
+            }
+        }
 
-        // Prevent multiple injections
-        headerContainer.dataset.hegeDialogInjected = 'true';
+        const existingBtn = localCtx.querySelector('.hege-block-all-btn');
+        if (existingBtn && document.body.contains(existingBtn)) return;
 
-        // Create the Block All Button
         const blockAllBtn = document.createElement('div');
         blockAllBtn.className = 'hege-block-all-btn';
         blockAllBtn.innerHTML = `
@@ -711,42 +770,30 @@ const Core = {
             e.stopPropagation();
             e.preventDefault();
 
-            // Scope the search to the modal context (go up 8 levels)
-            let ctx = header;
-            for (let i = 0; i < 8; i++) {
-                if (ctx.parentElement && ctx.parentElement.tagName !== 'BODY') {
-                    ctx = ctx.parentElement;
-                }
-            }
-
-            // Find all user links in the dialog context
             const links = ctx.querySelectorAll('a[href^="/@"]');
             let rawUsers = Array.from(links).map(a => {
                 const href = a.getAttribute('href');
                 return href.split('/@')[1].split('/')[0];
             });
 
-            // Deduplicate internally
             rawUsers = [...new Set(rawUsers)];
 
-            // Filter out existing DB, Queue, and Pending users
             const db = new Set(Storage.getJSON(CONFIG.KEYS.DB_KEY, []));
-            let activeQueue = Storage.getJSON(CONFIG.KEYS.BG_QUEUE, []);
+            const activeQueue = Storage.getJSON(CONFIG.KEYS.BG_QUEUE, []);
             const activeSet = new Set(activeQueue);
 
             const newUsers = rawUsers.filter(u => !db.has(u) && !activeSet.has(u) && !Core.pendingUsers.has(u));
 
             if (newUsers.length === 0) {
-                UI.showToast('沒有新帳號可加入 (皆已在歷史或排除中)');
+                UI.showToast('沒有新帳號可加入');
                 return;
             }
 
-            const status = Storage.getJSON(CONFIG.KEYS.BG_STATUS, {});
-            const isRunning = (Date.now() - (status.lastUpdate || 0) < 10000 && status.state === 'running');
-
-            // Directly add to pending without confirm dialog
             newUsers.forEach(u => Core.pendingUsers.add(u));
             Storage.setSessionJSON(CONFIG.KEYS.PENDING, [...Core.pendingUsers]);
+
+            const status = Storage.getJSON(CONFIG.KEYS.BG_STATUS, {});
+            const isRunning = (Date.now() - (status.lastUpdate || 0) < 10000 && status.state === 'running');
 
             if (isRunning) {
                 const combinedQueue = [...activeQueue, ...Core.pendingUsers];
@@ -756,43 +803,234 @@ const Core = {
                 UI.showToast(`已加入「${Core.pendingUsers.size} 選取」，請至清單「開始封鎖」`);
             }
 
-            // Sync checkbox visually on current page
             document.querySelectorAll('.hege-checkbox-container').forEach(box => {
                 if (box.dataset.username && Core.pendingUsers.has(box.dataset.username)) {
                     box.classList.add('checked');
                 }
             });
 
-            // CRITICAL: Update floating panel count!
             Core.updateControllerUI();
         };
 
-        if (Utils.isMobile()) {
-            blockAllBtn.addEventListener('touchstart', (e) => {
-                e.stopPropagation();
-            }, { passive: false });
-
-            blockAllBtn.addEventListener('touchend', (e) => {
-                // preventDefault stops iOS Safari from firing the synthetic click which triggers Universal Links
-                e.stopPropagation();
-                e.preventDefault();
-                handleBlockAll(e);
-            }, { passive: false });
-        } else {
-            blockAllBtn.addEventListener('click', handleBlockAll);
+        const allSpans = localCtx.querySelectorAll('span[dir="auto"]');
+        let sortSpan = null;
+        for (let span of allSpans) {
+            const spanText = (span.innerText || span.textContent || '').trim();
+            if (spanText === '排序' || spanText.includes('排序')) {
+                sortSpan = span;
+                break;
+            }
         }
 
-        headerContainer.style.display = 'flex';
-        headerContainer.style.alignItems = 'center';
+        if (sortSpan && sortSpan.closest('[role="button"]')) {
+            const sortBtn = sortSpan.closest('[role="button"]');
+            blockAllBtn.style.marginRight = '8px';
 
-        // Insert after the h1 so it is placed nicely
-        if (header.nextSibling) {
-            headerContainer.insertBefore(blockAllBtn, header.nextSibling);
+            if (!blockAllBtn.dataset.hegeEventBound) {
+                if (Utils.isMobile()) {
+                    blockAllBtn.addEventListener('touchend', (e) => {
+                        e.stopPropagation(); e.preventDefault();
+                        handleBlockAll(e);
+                    }, { passive: false, capture: true });
+                } else {
+                    blockAllBtn.addEventListener('click', handleBlockAll, true);
+                }
+                blockAllBtn.dataset.hegeEventBound = 'true';
+            }
+
+            try {
+                sortBtn.parentElement.style.display = 'flex';
+                sortBtn.parentElement.style.alignItems = 'center';
+                sortBtn.parentElement.insertBefore(blockAllBtn, sortBtn);
+            } catch (e) {
+                headerContainer.appendChild(blockAllBtn);
+            }
         } else {
-            headerContainer.appendChild(blockAllBtn);
+            if (!blockAllBtn.dataset.hegeEventBound) {
+                if (Utils.isMobile()) {
+                    blockAllBtn.addEventListener('touchend', (e) => {
+                        e.stopPropagation(); e.preventDefault();
+                        handleBlockAll(e);
+                    }, { passive: false, capture: true });
+                } else {
+                    blockAllBtn.addEventListener('click', handleBlockAll, true);
+                }
+                blockAllBtn.dataset.hegeEventBound = 'true';
+            }
+
+            blockAllBtn.style.marginLeft = 'auto';
+            blockAllBtn.style.marginRight = '8px';
+
+            if (header.nextSibling) {
+                headerContainer.insertBefore(blockAllBtn, header.nextSibling);
+            } else {
+                headerContainer.appendChild(blockAllBtn);
+            }
         }
     },
 
+    injectDialogCheckboxes: () => {
+        const ctx = Core.getTopContext();
+        const isDialog = ctx !== document.body;
+
+        const dialogHeaders = ctx.querySelectorAll('h1, h2, div[role="heading"] span');
+        let header = null;
+        for (let h of dialogHeaders) {
+            const tempText = (h.innerText || h.textContent || '').trim();
+            if (tempText && tempText !== 'Threads') {
+                if (isDialog || ['讚', '引用', '轉發', '貼文動態', '活動', 'Likes'].some(t => tempText.includes(t))) {
+                    header = h;
+                }
+            }
+        }
+        if (!header) return;
+
+        const links = ctx.querySelectorAll('a[href^="/@"]');
+        const dbRef = new Set(Storage.getJSON(CONFIG.KEYS.DB_KEY, []));
+        const activeQueue = Storage.getJSON(CONFIG.KEYS.BG_QUEUE, []);
+        const activeSet = new Set(activeQueue);
+
+        if (CONFIG.DEBUG_MODE && links.length > 0) {
+        }
+
+        links.forEach((a, idx) => {
+            const isAvatar = a.querySelector('img') || a.querySelector('svg') || a.innerText.trim() === '';
+            const username = a.getAttribute('href').split('/@')[1].split('/')[0];
+
+            if (!isAvatar) {
+                // If it's not an avatar link, we only skip it if it's the 2nd link of the same user (name link)
+                // However, in some views the name link IS the only link with a good flexRow. 
+                // So let's try to process both, but avoid double injection via flexRow check.
+            }
+
+            if (username === Utils.getMyUsername()) return;
+
+            let topContainer = a;
+            let followBtn = null;
+            for (let i = 0; i < 15; i++) {
+                if (!topContainer.parentElement) break;
+                topContainer = topContainer.parentElement;
+                const btns = Array.from(topContainer.querySelectorAll('div[role="button"]'));
+                followBtn = btns.find(b => b.innerText && ['追蹤', '正在追蹤', 'Follow', 'Following'].some(t => b.innerText.includes(t)));
+                if (followBtn) break;
+            }
+
+            let flexRow = null;
+            let followBtnContainer = null;
+
+            if (followBtn) {
+                let child = followBtn;
+                while (child && child !== topContainer) {
+                    let parent = child.parentElement;
+                    let safeUsername = username.replace(/"/g, '');
+                    // Threads lists usually have a clear row container that holds both user info and the follow button.
+                    if (parent && parent.children.length >= 2 && parent.querySelector(`a[href*="/@${safeUsername}"]`)) {
+                        flexRow = parent;
+                        followBtnContainer = child;
+                        break;
+                    }
+                    child = parent;
+                }
+            }
+
+            // Fallback: If no follow button (e.g. current user or specific list type), find a container that looks like a list item.
+            // Beta 53/54 optimization: Finding a stable Row Container.
+            // Priority: role="listitem" -> data-pressable-container -> Common Flex Row classes
+            if (!flexRow) {
+                flexRow = a.closest('div[role="listitem"]') ||
+                    a.closest('div[data-pressable-container="true"]') ||
+                    a.closest('.x1n2onr6.x1f9n5g') || // Common reply row class
+                    followBtn.parentElement.closest('.x78zum5.xdt5ytf') ||
+                    followBtn.parentElement;
+            }
+
+            if (!flexRow) return;
+
+            // Beta 54: Absolute deduplication. Check the whole row for THIS user's box.
+            const existingBox = flexRow.querySelector(`.hege-checkbox-container[data-username="${CSS.escape(username)}"]`);
+            if (existingBox) {
+                const isChecked = Core.pendingUsers.has(username);
+                if (isChecked !== existingBox.classList.contains('checked')) {
+                    existingBox.classList.toggle('checked', isChecked);
+                }
+                return;
+            }
+
+            // Beta 54: Special case - if a box already exists in this row but for a different username, 
+            // it means we've hit a shared parent. For safety, let's look for a better spot or skip.
+            if (flexRow.querySelector('.hege-checkbox-container')) {
+                // If the user's box isn't here, maybe it's in a different sub-flex.
+                // But generally, one box per role="listitem" is the goal.
+                return;
+            }
+
+            // Beta 40/42/54: Spacing adjustment on the Follow button side
+            if (followBtnContainer) {
+                followBtnContainer.style.setProperty("margin-right", "24px", "important");
+            }
+
+            // Ensure our chosen flexRow is the relative origin
+            if (flexRow.style.position === "" || window.getComputedStyle(flexRow).position === "static") {
+                flexRow.style.position = "relative";
+            }
+            flexRow.style.setProperty("overflow", "visible", "important");
+
+            const container = document.createElement("div");
+            container.className = "hege-checkbox-container";
+            container.dataset.username = username; // Ensure we identify who this box belongs to
+            container.style.position = "absolute";
+            // Coordinate for flexRow anchor
+            container.style.right = "-15px";
+            container.style.top = "50%";
+            container.style.transform = "translateY(-50%)";
+            container.style.cursor = 'pointer';
+            container.style.zIndex = '100';
+            container.style.backgroundColor = 'var(--bg-color, rgba(255,255,255,0.1))';
+            container.style.borderRadius = '4px';
+            container.style.padding = '2px';
+
+            const svgIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+            svgIcon.setAttribute("viewBox", "0 0 24 24");
+            svgIcon.classList.add("hege-svg-icon");
+
+            const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            rect.setAttribute("x", "2"); rect.setAttribute("y", "2");
+            rect.setAttribute("width", "20"); rect.setAttribute("height", "20");
+            rect.setAttribute("rx", "6"); rect.setAttribute("ry", "6");
+            rect.setAttribute("stroke", "currentColor"); rect.setAttribute("stroke-width", "2.5");
+            rect.setAttribute("fill", "none");
+
+            const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            path.classList.add("hege-checkmark");
+            path.setAttribute("d", "M6 12 l4 4 l8 -8");
+            path.setAttribute("fill", "none");
+
+            svgIcon.appendChild(rect); svgIcon.appendChild(path);
+            container.appendChild(svgIcon);
+
+            container.dataset.username = username;
+
+            if (dbRef.has(username)) {
+                container.classList.add('finished');
+            } else if (activeSet.has(username)) {
+                container.classList.add('pending');
+            } else if (Core.pendingUsers.has(username)) {
+                container.classList.add('checked');
+            }
+
+            // Beta 45: Only use handleGlobalClick to avoid double-toggle issues.
+            // Still keep the prevention listeners to block Threads' native behavior on these specific elements if needed.
+            if (!Utils.isMobile()) {
+                container.addEventListener('pointerdown', (e) => { e.stopPropagation(); }, true);
+                container.addEventListener('pointerup', (e) => { e.stopPropagation(); }, true);
+                container.addEventListener('mousedown', (e) => { e.stopPropagation(); if (e.shiftKey) e.preventDefault(); }, true);
+                container.addEventListener('mouseup', (e) => { e.stopPropagation(); }, true);
+            }
+            container.addEventListener('click', Core.handleGlobalClick, true);
+
+            flexRow.appendChild(container); // Just append, 'order: 999' will put it on the right
+        });
+    },
 
     scanAndInject: () => {
         // Performance: Only run if window is active/visible to save CPU
@@ -893,13 +1131,15 @@ const Core = {
 
                 container.addEventListener('touchend', (e) => {
                     if (e.target.closest('.hege-checkbox-container')) {
+                        if (CONFIG.DEBUG_MODE) console.log('[留友封] Checkbox Touchend detected');
                         e.stopPropagation();
-                        e.preventDefault(); // CRITICAL: Stop iOS from firing synthetic click that triggers Universal Link
+                        // CRITICAL: Stop iOS from firing synthetic click that triggers Universal Link
+                        if (e.cancelable) e.preventDefault();
 
                         // Manually trigger handleGlobalClick since we prevented the default synthetic click
                         Core.handleGlobalClick(e);
                     }
-                }, { passive: false });
+                }, { passive: false, capture: true });
             } else {
                 // Desktop (Chrome + Safari): intercept pointer/mouse events before React steals them
                 container.addEventListener('pointerdown', (e) => {
@@ -1180,8 +1420,6 @@ const Core = {
         location.reload();
     },
 
-
-
     exportHistory: () => {
         const db = Storage.getJSON(CONFIG.KEYS.DB_KEY, []);
         if (db.length === 0) { UI.showToast('歷史資料庫是空的'); return; }
@@ -1331,9 +1569,9 @@ const Core = {
             `Worker: ${bgStatus.state || 'idle'} | 最後更新: ${bgStatus.lastUpdate ? new Date(bgStatus.lastUpdate).toLocaleTimeString() : 'N/A'}`,
             ``,
             `── Worker 統計 ──`,
-            `成功: ${workerStats.stats?.success ?? 'N/A'} | 跳過: ${workerStats.stats?.skipped ?? 'N/A'} | 失敗: ${workerStats.stats?.failed ?? 'N/A'}`,
-            `驗證等級: ${workerStats.verifyLevel ?? 'N/A'} | 連續失敗: ${workerStats.consecutiveFails ?? 'N/A'}`,
-            `Session 名單: ${workerStats.sessionQueue?.length ?? 'N/A'} | 初始 Total: ${workerStats.initialTotal ?? 'N/A'}`,
+            `成功: ${(workerStats.stats && workerStats.stats.success) || 'N/A'} | 跳過: ${(workerStats.stats && workerStats.stats.skipped) || 'N/A'} | 失敗: ${(workerStats.stats && workerStats.stats.failed) || 'N/A'}`,
+            `驗證等級: ${workerStats.verifyLevel || 'N/A'} | 連續失敗: ${workerStats.consecutiveFails || 'N/A'}`,
+            `Session 名單: ${(workerStats.sessionQueue && workerStats.sessionQueue.length) || 'N/A'} | 初始 Total: ${workerStats.initialTotal || 'N/A'}`,
             ``,
             `── DOM 快照 ──`,
             `更多按鈕 SVG(${moreSvgs.length}): ${svgDetails.length > 0 ? svgDetails.join(' | ') : '未找到'}`,
@@ -2502,13 +2740,8 @@ const Worker = {
 
                 if (pending.size === 0) { UI.showToast('請先勾選用戶！'); return; }
 
-                const isMobile = Utils.isMobile();
-                const deskMode = Storage.get(CONFIG.KEYS.MAC_MODE) || 'background';
-
-                if (isMobile) {
+                if (Utils.isMobile()) {
                     Core.runSameTabWorker();
-                } else if (deskMode === 'foreground') {
-                    Core.runForegroundBlock();
                 } else {
                     // Add to queue
                     const q = Storage.getJSON(CONFIG.KEYS.BG_QUEUE, []);
@@ -2527,23 +2760,6 @@ const Worker = {
                 }
             };
 
-            const updateModeUI = () => {
-                const currentMode = Storage.get(CONFIG.KEYS.MAC_MODE) || 'background';
-                const modeText = document.getElementById('hege-mode-text');
-                const modeDesc = document.getElementById('hege-mode-desc');
-                if (!modeText || !modeDesc) return;
-
-                if (currentMode === 'foreground') {
-                    modeText.textContent = '前景模式 (iOS模擬)';
-                    modeText.style.color = '#ff9f0a';
-                    modeDesc.textContent = '當前分頁執行';
-                } else {
-                    modeText.textContent = '背景模式 (預設)';
-                    modeText.style.color = '#4cd964';
-                    modeDesc.textContent = '新分頁執行';
-                }
-            };
-
             const callbacks = {
                 onMainClick: handleMainButton,
                 onClearSel: () => {
@@ -2555,7 +2771,8 @@ const Worker = {
                         Storage.setJSON(CONFIG.KEYS.BG_STATUS, {});
                         Core.blockQueue.forEach(b => {
                             b.style.transform = 'none';
-                            b.parentElement.querySelector('.hege-checkbox-container')?.classList.remove('checked');
+                            const cb = b.parentElement.querySelector('.hege-checkbox-container');
+                            if (cb) cb.classList.remove('checked');
                         });
                         Core.blockQueue.clear();
                         Core.updateControllerUI();
@@ -2567,18 +2784,10 @@ const Worker = {
                 onExport: () => Core.exportHistory(),
                 onRetryFailed: () => Core.retryFailedQueue(),
                 onReport: () => Core.showReportDialog(),
-                onStop: () => { if (confirm('停止?')) Storage.set(CONFIG.KEYS.BG_CMD, 'stop'); },
-                onModeToggle: () => {
-                    const cur = Storage.get(CONFIG.KEYS.MAC_MODE) || 'background';
-                    const next = cur === 'background' ? 'foreground' : 'background';
-                    Storage.set(CONFIG.KEYS.MAC_MODE, next);
-                    updateModeUI();
-                    UI.showToast(`已切換模式`);
-                }
+                onStop: () => { if (confirm('停止?')) Storage.set(CONFIG.KEYS.BG_CMD, 'stop'); }
             };
 
             const panel = UI.createPanel(callbacks);
-            updateModeUI();
 
             // Sync Logic (Restored from beta46)
             window.addEventListener('storage', (e) => {

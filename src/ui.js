@@ -244,11 +244,6 @@ export const UI = {
         setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 500); }, duration);
     },
 
-    updateDebugLog: (msg) => {
-        // Console only requested
-        console.log(`[HegeUI] ${msg}`);
-    },
-
     anchorPanel: () => {
         const panel = document.getElementById('hege-panel');
         if (!panel) return;

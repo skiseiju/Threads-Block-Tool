@@ -97,13 +97,8 @@ import { Worker } from './worker.js';
 
                 if (pending.size === 0) { UI.showToast('請先勾選用戶！'); return; }
 
-                const isMobile = Utils.isMobile();
-                const deskMode = Storage.get(CONFIG.KEYS.MAC_MODE) || 'background';
-
-                if (isMobile) {
+                if (Utils.isMobile()) {
                     Core.runSameTabWorker();
-                } else if (deskMode === 'foreground') {
-                    Core.runForegroundBlock();
                 } else {
                     // Add to queue
                     const q = Storage.getJSON(CONFIG.KEYS.BG_QUEUE, []);
@@ -122,23 +117,6 @@ import { Worker } from './worker.js';
                 }
             };
 
-            const updateModeUI = () => {
-                const currentMode = Storage.get(CONFIG.KEYS.MAC_MODE) || 'background';
-                const modeText = document.getElementById('hege-mode-text');
-                const modeDesc = document.getElementById('hege-mode-desc');
-                if (!modeText || !modeDesc) return;
-
-                if (currentMode === 'foreground') {
-                    modeText.textContent = '前景模式 (iOS模擬)';
-                    modeText.style.color = '#ff9f0a';
-                    modeDesc.textContent = '當前分頁執行';
-                } else {
-                    modeText.textContent = '背景模式 (預設)';
-                    modeText.style.color = '#4cd964';
-                    modeDesc.textContent = '新分頁執行';
-                }
-            };
-
             const callbacks = {
                 onMainClick: handleMainButton,
                 onClearSel: () => {
@@ -150,7 +128,8 @@ import { Worker } from './worker.js';
                         Storage.setJSON(CONFIG.KEYS.BG_STATUS, {});
                         Core.blockQueue.forEach(b => {
                             b.style.transform = 'none';
-                            b.parentElement.querySelector('.hege-checkbox-container')?.classList.remove('checked');
+                            const cb = b.parentElement.querySelector('.hege-checkbox-container');
+                            if (cb) cb.classList.remove('checked');
                         });
                         Core.blockQueue.clear();
                         Core.updateControllerUI();
@@ -162,18 +141,10 @@ import { Worker } from './worker.js';
                 onExport: () => Core.exportHistory(),
                 onRetryFailed: () => Core.retryFailedQueue(),
                 onReport: () => Core.showReportDialog(),
-                onStop: () => { if (confirm('停止?')) Storage.set(CONFIG.KEYS.BG_CMD, 'stop'); },
-                onModeToggle: () => {
-                    const cur = Storage.get(CONFIG.KEYS.MAC_MODE) || 'background';
-                    const next = cur === 'background' ? 'foreground' : 'background';
-                    Storage.set(CONFIG.KEYS.MAC_MODE, next);
-                    updateModeUI();
-                    UI.showToast(`已切換模式`);
-                }
+                onStop: () => { if (confirm('停止?')) Storage.set(CONFIG.KEYS.BG_CMD, 'stop'); }
             };
 
             const panel = UI.createPanel(callbacks);
-            updateModeUI();
 
             // Sync Logic (Restored from beta46)
             window.addEventListener('storage', (e) => {

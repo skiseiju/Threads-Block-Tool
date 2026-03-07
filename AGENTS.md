@@ -20,6 +20,7 @@
 ## 📦 版本與建置規範
 
 - 每一次程式碼修改後，都必須在 `src/config.js` 中 **遞增 beta 版號**（例如 `2.0.7-beta22` → `2.0.7-beta23`）。
+- **iOS/iPad 相容性規範**：必須包含廣泛的 `@match` 與 `@include` 規則（包含 `http` 與 `*://`），否則 iOS Userscripts 應用程式會顯示「無匹配腳本」。規範詳見 `build.sh` 與 `BLOCKING_ARCHITECTURE.md`。
 - 使用 `./build.sh --no-bump` 進行建置（避免 build script 自行跳號）。
 - **禁止自行發布正式版**。只有當使用者明確說「可以發布正式版」時，才執行以下流程：
   1. 使用 `./build.sh --release` 去除 beta 標籤

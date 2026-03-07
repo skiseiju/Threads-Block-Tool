@@ -81,6 +81,16 @@ cat <<EOF > "$OUT_FILE"
 // @match        https://threads.net/*
 // @match        https://www.threads.com/*
 // @match        https://threads.com/*
+// @match        https://*.threads.net/*
+// @match        https://*.threads.com/*
+// @match        http://*.threads.net/*
+// @match        http://*.threads.com/*
+// @match        *://*.threads.net/*
+// @match        *://*.threads.com/*
+// @include      *://*.threads.net/*
+// @include      *://*.threads.com/*
+// @include      *://threads.net/*
+// @include      *://threads.com/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=threads.net
 // @grant        none
 // ==/UserScript==

@@ -1,0 +1,366 @@
+diff --git a/src/core.js b/src/core.js
+index 257bc31..3e54254 100644
+--- a/src/core.js
++++ b/src/core.js
+@@ -55,16 +55,6 @@ export const Core = {
+         // directly to the initialized containers instead of window to prevent click-through.
+     },
+ 
+-    saveToDB: (username) => {
+-        if (!username) return;
+-        username = username.replace('@', '').trim();
+-        let dbArray = Storage.getJSON(CONFIG.KEYS.DB_KEY, []);
+-        let db = new Set(dbArray);
+-        if (!db.has(username)) {
+-            db.add(username);
+-            Storage.setJSON(CONFIG.KEYS.DB_KEY, [...db]);
+-        }
+-    },
+ 
+     injectDialogBlockAll: () => {
+         const headers = document.querySelectorAll('h1, h2');
+@@ -75,8 +65,9 @@ export const Core = {
+             const text = h.innerText.trim();
+ 
+             // We want to lock onto these specific dialog keywords:
+-            // "貼文動態" (Post Activity), "讚" (Likes), "Likes"
+-            if (text.includes('貼文動態') || text.includes('讚') || text.includes('Likes')) {
++            // "貼文動態" (Post Activity), "讚" (Likes), "次引用" (Quotes), "轉發" (Reposts)
++            // also matching "次轉發" and "個讚" from localized strings
++            if (text.includes('貼文動態') || text.includes('讚') || text.includes('Likes') || text.includes('次引用') || text.includes('Quotes') || text.includes('轉發') || text.includes('Reposts') || text.includes('個讚')) {
+                 // Ignore the main page "Threads" header if somehow it matched
+                 if (text === 'Threads') continue;
+ 
+@@ -89,8 +80,8 @@ export const Core = {
+                 }
+ 
+                 // With specific keywords, we can be more confident, but let's enforce dialog
+-                // or just allow it if the text is exactly '貼文動態' since it's highly specific.
+-                if (isDialog || text === '貼文動態') {
++                // or just allow it if it's highly specific.
++                if (isDialog || text === '貼文動態' || text.includes('次引用') || text.includes('次轉發') || text.includes('個讚')) {
+                     header = h;
+                     titleText = text;
+                     break;
+@@ -104,14 +95,15 @@ export const Core = {
+         if (!headerContainer) return;
+ 
+         // Ensure we haven't already injected the button
+-        if (headerContainer.dataset.hegeDialogInjected) return;
+-
+-        // Prevent multiple injections
+-        headerContainer.dataset.hegeDialogInjected = 'true';
++        if (headerContainer.querySelector('.hege-block-all-btn')) return;
+ 
+         // Create the Block All Button
+         const blockAllBtn = document.createElement('div');
+         blockAllBtn.className = 'hege-block-all-btn';
++        blockAllBtn.style.marginLeft = 'auto'; // Push to the right
++        blockAllBtn.style.marginRight = '8px';
++        blockAllBtn.style.flexShrink = '0';
++        blockAllBtn.style.zIndex = '10';
+         blockAllBtn.innerHTML = `
+             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"></path></svg>
+             <span>同列全封</span>
+@@ -166,10 +158,137 @@ export const Core = {
+                 UI.showToast(`已加入「${Core.pendingUsers.size} 選取」，請至清單「開始封鎖」`);
+             }
+ 
+-            // Sync checkbox visually on current page
+-            document.querySelectorAll('.hege-checkbox-container').forEach(box => {
+-                if (box.dataset.username && Core.pendingUsers.has(box.dataset.username)) {
+-                    box.classList.add('checked');
++            // Sync checkbox visually on current page + Inject checkboxes for the first time if needed
++            // This handles the new dialog implementation
++            const dbRef = new Set(Storage.getJSON(CONFIG.KEYS.DB_KEY, []));
++            const cdqRef = new Set(Storage.getJSON(CONFIG.KEYS.COOLDOWN_QUEUE, []));
++            const bgqRef = new Set(Storage.getJSON(CONFIG.KEYS.BG_QUEUE, []));
++
++            const processedDialogUsers = new Set();
++
++            links.forEach(a => {
++                const href = a.getAttribute('href');
++                if (!href || !href.includes('/@')) return;
++                const username = href.split('/@')[1].split('/')[0];
++
++                // Only process if it's not the user themselves
++                if (username === Utils.getMyUsername()) return;
++
++                // We only inject based on the Avatar link to prevent duplication and target the main row actor properly
++                const isAvatar = a.querySelector('img') || a.querySelector('svg') || a.innerText.trim() === '';
++                if (!isAvatar) return;
++
++                let followBtn = null;
++                let topContainer = a;
++
++                // Go up looking for a common container that has the follow button (up to 15 levels)
++                for (let i = 0; i < 15; i++) {
++                    if (!topContainer.parentElement) break;
++                    topContainer = topContainer.parentElement;
++                    const btns = Array.from(topContainer.querySelectorAll('div[role="button"]'));
++                    followBtn = btns.find(b => b.innerText && ['追蹤', '正在追蹤', 'Follow', 'Following'].some(t => b.innerText.includes(t)));
++                    if (followBtn) break;
++                }
++
++                let flexRow = null;
++                let followBtnContainer = null;
++
++                if (followBtn) {
++                    let child = followBtn;
++                    // Go up from follow button until we find a parent that contains the user's text link
++                    while (child && child !== topContainer) {
++                        let parent = child.parentElement;
++                        // Escape quotes just in case, though threads usernames won't have them
++                        let safeUsername = username.replace(/"/g, '');
++                        if (parent && parent.children.length >= 2 && parent.querySelector(`a[href*="/@${safeUsername}"]`)) {
++                            flexRow = parent;
++                            followBtnContainer = child;
++                            break;
++                        }
++                        child = parent;
++                    }
++                }
++
++                // If no follow button found, try data-pressable-container (for activity replies that lack follow button)
++                if (!flexRow) {
++                    let pressable = a.closest('[data-pressable-container="true"]');
++                    if (pressable && pressable.firstElementChild) {
++                        flexRow = pressable.firstElementChild;
++                        if (flexRow.children.length >= 2) {
++                            followBtnContainer = flexRow.lastElementChild;
++                        } else {
++                            followBtnContainer = null;
++                        }
++                    }
++                }
++
++                if (processedDialogUsers.has(username)) {
++                    if (flexRow) {
++                        const box = flexRow.querySelector('.hege-checkbox-container');
++                        if (box && Core.pendingUsers.has(username)) box.classList.add('checked');
++                    } else {
++                        const box = a.parentElement.querySelector('.hege-checkbox-container');
++                        if (box && Core.pendingUsers.has(username)) box.classList.add('checked');
++                    }
++                    return;
++                }
++
++                if (flexRow && followBtnContainer) {
++                    processedDialogUsers.add(username);
++                    if (!flexRow.querySelector('.hege-checkbox-container')) {
++                        const container = Core.createCheckboxElement(username, a);
++
++                        container.style.display = 'inline-flex';
++                        container.style.alignItems = 'center';
++                        container.style.justifyContent = 'center';
++                        container.style.verticalAlign = 'middle';
++                        container.style.marginRight = '12px'; // Space before follow button
++                        container.style.marginLeft = '8px';
++                        container.style.flexShrink = '0';
++                        container.style.width = '24px';
++                        container.style.height = '24px';
++
++                        if (dbRef.has(username)) {
++                            container.classList.add('finished');
++                        } else if (Core.pendingUsers.has(username) || cdqRef.has(username) || bgqRef.has(username)) {
++                            container.classList.add('checked');
++                            Core.blockQueue.add(a);
++                        }
++
++                        flexRow.insertBefore(container, followBtnContainer);
++                    }
++                } else {
++                    // Fallback
++                    processedDialogUsers.add(username);
++                    if (!a.parentElement.querySelector('.hege-checkbox-container')) {
++                        const container = Core.createCheckboxElement(username, a);
++                        container.style.display = 'inline-flex';
++                        container.style.alignItems = 'center';
++                        container.style.justifyContent = 'center';
++                        container.style.verticalAlign = 'middle';
++                        container.style.marginLeft = '8px';
++                        container.style.flexShrink = '0';
++                        container.style.width = '20px';
++                        container.style.height = '20px';
++
++                        if (dbRef.has(username)) {
++                            container.classList.add('finished');
++                        } else if (Core.pendingUsers.has(username) || cdqRef.has(username) || bgqRef.has(username)) {
++                            container.classList.add('checked');
++                            Core.blockQueue.add(a);
++                        }
++
++                        // Insert safely before the avatar as lowest fallback
++                        const parent = a.parentElement;
++                        try {
++                            if (window.getComputedStyle(parent).display !== 'flex') {
++                                parent.style.display = 'flex';
++                                parent.style.alignItems = 'center';
++                            }
++                        } catch (e) { }
++
++                        parent.insertBefore(container, a);
++                    }
+                 }
+             });
+ 
+@@ -256,82 +375,7 @@ export const Core = {
+             btn.style.transition = 'transform 0.2s';
+             btn.style.transform = 'translateX(-45px)';
+ 
+-            const container = document.createElement('div');
+-            container.className = 'hege-checkbox-container';
+-
+-            const svgIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+-            svgIcon.setAttribute("viewBox", "0 0 24 24");
+-            svgIcon.classList.add("hege-svg-icon");
+-
+-            const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+-            rect.setAttribute("x", "2"); rect.setAttribute("y", "2");
+-            rect.setAttribute("width", "20"); rect.setAttribute("height", "20");
+-            rect.setAttribute("rx", "6"); rect.setAttribute("ry", "6");
+-            rect.setAttribute("stroke", "currentColor"); rect.setAttribute("stroke-width", "2.5");
+-            rect.setAttribute("fill", "none");
+-
+-            const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+-            path.classList.add("hege-checkmark");
+-            path.setAttribute("d", "M6 12 l4 4 l8 -8");
+-            path.setAttribute("fill", "none");
+-
+-            svgIcon.appendChild(rect); svgIcon.appendChild(path);
+-            container.appendChild(svgIcon);
+-
+-            if (username) {
+-                btn.dataset.username = username;
+-                container.dataset.username = username;
+-
+-                const db = new Set(Storage.getJSON(CONFIG.KEYS.DB_KEY));
+-                const cdq = new Set(Storage.getJSON(CONFIG.KEYS.COOLDOWN_QUEUE, []));
+-                const bgq = new Set(Storage.getJSON(CONFIG.KEYS.BG_QUEUE, []));
+-
+-                if (db.has(username)) {
+-                    container.classList.add('finished');
+-                } else if (Core.pendingUsers.has(username) || cdq.has(username) || bgq.has(username)) {
+-                    container.classList.add('checked');
+-                    Core.blockQueue.add(btn);
+-                }
+-            }
+-
+-            if (Utils.isMobile()) {
+-                container.addEventListener('touchstart', (e) => {
+-                    if (e.target.closest('.hege-checkbox-container')) {
+-                        e.stopPropagation();
+-                    }
+-                }, { passive: false });
+-
+-                container.addEventListener('touchend', (e) => {
+-                    if (e.target.closest('.hege-checkbox-container')) {
+-                        e.stopPropagation();
+-                        e.preventDefault(); // CRITICAL: Stop iOS from firing synthetic click that triggers Universal Link
+-
+-                        // Manually trigger handleGlobalClick since we prevented the default synthetic click
+-                        Core.handleGlobalClick(e);
+-                    }
+-                }, { passive: false });
+-            } else {
+-                // Desktop (Chrome + Safari): intercept pointer/mouse events before React steals them
+-                container.addEventListener('pointerdown', (e) => {
+-                    e.stopPropagation();
+-                    e.preventDefault();
+-                }, true);
+-                container.addEventListener('pointerup', (e) => {
+-                    e.stopPropagation();
+-                    e.preventDefault();
+-                }, true);
+-                container.addEventListener('mousedown', (e) => {
+-                    e.stopPropagation();
+-                    if (e.shiftKey) e.preventDefault();
+-                }, true);
+-                container.addEventListener('mouseup', (e) => {
+-                    e.stopPropagation();
+-                }, true);
+-            }
+-
+-            // Bind directly to the element using a capture phase listener.
+-            // This is the most bulletproof way to intercept clicks before React or <a> tags steal them.
+-            container.addEventListener('click', Core.handleGlobalClick, true);
++            const container = Core.createCheckboxElement(username, btn);
+ 
+             try {
+                 const ps = window.getComputedStyle(btn.parentElement).position;
+@@ -341,6 +385,75 @@ export const Core = {
+         });
+     },
+ 
++    createCheckboxElement: (username, anchorElement) => {
++        const container = document.createElement('div');
++        container.className = 'hege-checkbox-container';
++
++        const svgIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
++        svgIcon.setAttribute("viewBox", "0 0 24 24");
++        svgIcon.classList.add("hege-svg-icon");
++
++        const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
++        rect.setAttribute("x", "2"); rect.setAttribute("y", "2");
++        rect.setAttribute("width", "20"); rect.setAttribute("height", "20");
++        rect.setAttribute("rx", "6"); rect.setAttribute("ry", "6");
++        rect.setAttribute("stroke", "currentColor"); rect.setAttribute("stroke-width", "2.5");
++        rect.setAttribute("fill", "none");
++
++        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
++        path.classList.add("hege-checkmark");
++        path.setAttribute("d", "M6 12 l4 4 l8 -8");
++        path.setAttribute("fill", "none");
++
++        svgIcon.appendChild(rect); svgIcon.appendChild(path);
++        container.appendChild(svgIcon);
++
++        if (username) {
++            if (anchorElement) anchorElement.dataset.username = username;
++            container.dataset.username = username;
++        }
++
++        if (Utils.isMobile()) {
++            container.addEventListener('touchstart', (e) => {
++                if (e.target.closest('.hege-checkbox-container')) {
++                    e.stopPropagation();
++                }
++            }, { passive: false });
++
++            container.addEventListener('touchend', (e) => {
++                if (e.target.closest('.hege-checkbox-container')) {
++                    e.stopPropagation();
++                    e.preventDefault(); // CRITICAL: Stop iOS from firing synthetic click that triggers Universal Link
++
++                    // Manually trigger handleGlobalClick since we prevented the default synthetic click
++                    Core.handleGlobalClick(e);
++                }
++            }, { passive: false });
++        } else {
++            // Desktop (Chrome + Safari): intercept pointer/mouse events before React steals them
++            container.addEventListener('pointerdown', (e) => {
++                e.stopPropagation();
++                e.preventDefault();
++            }, true);
++            container.addEventListener('pointerup', (e) => {
++                e.stopPropagation();
++                e.preventDefault();
++            }, true);
++            container.addEventListener('mousedown', (e) => {
++                e.stopPropagation();
++                if (e.shiftKey) e.preventDefault();
++            }, true);
++            container.addEventListener('mouseup', (e) => {
++                e.stopPropagation();
++            }, true);
++        }
++
++        // Bind directly to the element using a capture phase listener.
++        container.addEventListener('click', Core.handleGlobalClick, true);
++
++        return container;
++    },
++
+     handleGlobalClick: (e) => {
+         const container = e.target.closest('.hege-checkbox-container');
+         if (!container) return;

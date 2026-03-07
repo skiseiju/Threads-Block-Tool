@@ -30,8 +30,6 @@ export const Utils = {
     log: (msg) => {
         if (!CONFIG.DEBUG_MODE) return;
         console.log(`[RightBlock] ${msg}`);
-        // Dispatch to UI console if available
-        if (window.hegeLogUI) window.hegeLogUI(msg);
     },
 
     simClick: (element) => {

@@ -1,5 +1,5 @@
 export const CONFIG = {
-    VERSION: '2.2.2', // Enhancement: Expanded row-blocking support
+    VERSION: '2.2.2', // Fix: Restricted Block-All scope and visibility check
     DEBUG_MODE: false,
     DB_KEY: 'hege_block_db_v1',
     KEYS: {

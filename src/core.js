@@ -184,8 +184,26 @@ export const Core = {
             e.stopPropagation();
             e.preventDefault();
 
-            const links = ctx.querySelectorAll('a[href^="/@"]');
-            let rawUsers = Array.from(links).map(a => {
+            // Beta 56: Re-calculate context and bounds at click-time for maximum precision
+            const activeCtx = Core.getTopContext();
+            const containerRect = activeCtx.getBoundingClientRect();
+
+            // Narrow search scope to prevent "bleeding" into background layers if the list is short
+            const links = activeCtx.querySelectorAll('a[href^="/@"]');
+            let rawUsers = Array.from(links).filter(a => {
+                const rect = a.getBoundingClientRect();
+                // 1. Must be visible and have dimensions
+                const isVisible = rect.height > 5 && rect.width > 5;
+                // 2. Must be within the visual viewport of the active dialog
+                // Adding a small 10px buffer to account for padding/rounding
+                const isInBounds = rect.top >= (containerRect.top - 10) &&
+                    rect.bottom <= (containerRect.bottom + 10);
+
+                // 3. Avoid IDs in headers (labels) to focus on the actual list items
+                const isHeaderLink = a.closest('h1, h2, [role="heading"]');
+
+                return isVisible && isInBounds && !isHeaderLink;
+            }).map(a => {
                 const href = a.getAttribute('href');
                 return href.split('/@')[1].split('/')[0];
             });
@@ -198,7 +216,7 @@ export const Core = {
 
             // Beta 55: Scan for "Replying to @username" (正在回覆 @username)
             // This is crucial for comment activity views.
-            const allText = ctx.innerText || ctx.textContent || "";
+            const allText = activeCtx.innerText || activeCtx.textContent || "";
             const replyMatch = allText.match(/(?:正在回覆|Replying to)\s*@([a-zA-Z0-9._]+)/i);
             if (replyMatch && replyMatch[1]) {
                 skipUsers.add(replyMatch[1]);
@@ -313,7 +331,16 @@ export const Core = {
         }
         if (!header) return;
 
-        const links = ctx.querySelectorAll('a[href^="/@"]');
+        const containerRect = ctx.getBoundingClientRect();
+        const links = Array.from(ctx.querySelectorAll('a[href^="/@"]')).filter(a => {
+            const rect = a.getBoundingClientRect();
+            // Ensure the link is actually visible and within the dialog view
+            const isVisible = rect.height > 5 && rect.width > 5;
+            const isInBounds = rect.top >= (containerRect.top - 10) &&
+                rect.bottom <= (containerRect.bottom + 10);
+            return isVisible && isInBounds;
+        });
+
         const dbRef = new Set(Storage.getJSON(CONFIG.KEYS.DB_KEY, []));
         const activeQueue = Storage.getJSON(CONFIG.KEYS.BG_QUEUE, []);
         const activeSet = new Set(activeQueue);
